@@ -9,7 +9,29 @@ def get_data(dataset_dir, dataset):
     expr_fp = os.path.join(dataset_dir, dataset, "%s.txt" % dataset)
     expr_df = pd.read_csv(expr_fp, sep="\t", header=0, index_col=0)
     expr = expr_df.values.T
-    return expr
+    genes, samples = expr_df.index.tolist(), list(expr_df.columns.values)
+    return expr, genes, samples
+
+def get_labels(dataset_dir, dataset, samples):
+    if dataset == "petropoulus":
+        stage_arr = []
+        for sample in samples:
+            ssplit = sample.split(".")
+            if ssplit[1] in ["early", "late"]:
+                stage = "%s_%s" % (ssplit[0], ssplit[1])
+                stage_arr.append(stage)
+            else:
+                stage = ssplit[0]
+            stage_arr.append(stage)
+    else:
+        label_fp = os.path.join(dataset_dir, dataset, "%s_label.txt" % dataset)
+        label_df = pd.read_csv(label_fp, sep="\t", header=None, index_col=0)
+        sample_names = label_df.index.tolist()
+        sample_dict = { sample: sid for sid, sample in enumerate(samples)}
+        stages = label_df.values.flatten()
+        stage_arr = [stages[sample_dict[sample]] for sample in sample_names]
+    return stage_arr
+
 
 def preprocess_data(expr, log, scale):
     expr[expr < 0] = 0.0
@@ -28,15 +50,15 @@ def loss_function(recon_x, x, mu, log_var, var=False):
     else:
         var_ones = torch.ones(log_var.size()).cuda()
         KLD = -0.5 * torch.sum(1 + 1 - mu.pow(2) - torch.exp(var_ones), dim=-1)
-    return BCE + torch.mean(KLD) * 50.0 # reconstruction error + KL divergence losses
+    KLD = torch.mean(KLD)
+    return BCE + KLD, KLD # reconstruction error + KL divergence losses
 
-def train(vasc, optimizer, train_loader, args):
+def train(vasc, optimizer, train_loader, model_fp, args):
     vasc.train()
     epochs = args.epochs
-    losses = []
-    prev_loss = np.inf
+    min_loss = np.inf
+    patience = 0
     for epoch in range(epochs):
-        cur_loss = prev_loss
         train_loss = 0
         if epoch % 100 == 0 and args.annealing:
             tau = max(args.tau0 * np.exp(-args.anneal_rate * epoch), args.min_tau)
@@ -44,20 +66,37 @@ def train(vasc, optimizer, train_loader, args):
         for batch_idx, data in enumerate(train_loader):
             data = data[0].cuda()
             optimizer.zero_grad()
-
             recon_batch, mu, log_var = vasc.forward(data, tau)
-            loss = loss_function(recon_batch, data, mu, log_var)
-
+            loss, kld = loss_function(recon_batch, data, mu, log_var)
             loss.backward()
             train_loss += loss.item()
             optimizer.step()
-        cur_loss = min(train_loss, cur_loss)
-        losses.append(train_loss)
+        min_loss = min(train_loss, min_loss)
+        if train_loss > min_loss:
+            patience += 1
+        else:
+            torch.save(vasc.state_dict(), model_fp)
+            print("Saved model at epoch %d with min_loss: %.0f" % (epoch + 1, min_loss))
+            patience = 0
+        if epoch % 20 == 1:
+            print("Epoch %d/%d" % (epoch + 1, epochs))
+            print("Loss:" + str(train_loss))
+        if patience > args.patience and epoch > args.min_stop:
+            break
 
-        if epoch % args.patience == 1:
-            print( "Epoch %d/%d"%(epoch + 1, epochs))
-            print( "Loss:" + str(train_loss) )
-            if abs(cur_loss - prev_loss) < 1 and epoch > args.min_stop:
-                break
-            prev_loss = train_loss
 
+def evaluate(vasc, expr, model_fp, args):
+    activation = {}
+    def get_activation(name):
+        def hook(model, input, output):
+            activation[name] = output.detach()
+        return hook
+
+    vasc.z_mean.register_forward_hook(get_activation('z_mean'))
+    vasc.load_state_dict(torch.load(model_fp))
+    print("Load state dict successful!")
+    vasc.eval()
+    expr = expr.cuda()
+    _ = vasc(expr, args.min_tau)
+    reduced_reprs = activation['z_mean'].detach().cpu().numpy()
+    return reduced_reprs

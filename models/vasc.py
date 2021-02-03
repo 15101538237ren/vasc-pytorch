@@ -5,11 +5,12 @@ import torch.nn.functional as F
 import numpy as np
 
 class VASC(nn.Module):
-    def __init__(self, x_dim, z_dim, var, dropout):
+    def __init__(self, x_dim, z_dim, var, dropout, isTrain):
         super(VASC, self).__init__()
         self.x_dim = x_dim
         self.var = var
         self.dropout = dropout
+        self.isTrain = isTrain
 
         # encoder part
         self.fc1 = nn.Linear(x_dim, 512)
@@ -25,7 +26,8 @@ class VASC(nn.Module):
         self.dc = nn.Linear(512, x_dim)
 
     def encoder(self, x):
-        x = nn.Dropout(p=self.dropout)(x)
+        if self.isTrain:
+            x = nn.Dropout(p=self.dropout)(x)
         h1 = self.fc1(x)
         h2 = F.relu(self.fc2(h1))
         h3 = F.relu(self.fc3(h2))
@@ -60,20 +62,22 @@ class VASC(nn.Module):
         h5 = F.relu(self.fc5(h4))
         h6 = F.relu(self.fc6(h5))
         expr_x = F.sigmoid(self.dc(h6))
+        if self.isTrain:
+            p = torch.exp(-torch.pow(expr_x, 2)) # p: dropout rate
+            q = torch.ones(p.size()).cuda() - p
 
-        p = torch.exp(-torch.pow(expr_x, 2)) # p: dropout rate
-        q = torch.ones(p.size()).cuda() - p
+            log_q = torch.log(q + torch.ones(q.size()).mul(1e-20).cuda())
+            log_p = torch.log(p + torch.ones(p.size()).mul(1e-20).cuda())
 
-        log_q = torch.log(q + torch.ones(q.size()).mul(1e-20).cuda())
-        log_p = torch.log(p + torch.ones(p.size()).mul(1e-20).cuda())
+            log_p = log_p.unsqueeze(0).permute(1, 2, 0)
+            log_q = log_q.unsqueeze(0).permute(1, 2, 0)
+            logits = torch.cat((log_p, log_q), dim=-1)
 
-        log_p = log_p.unsqueeze(0).permute(1, 2, 0)
-        log_q = log_q.unsqueeze(0).permute(1, 2, 0)
-        logits = torch.cat((log_p, log_q), dim=-1)
-
-        samples = self.compute_softmax(logits, tau)
-        samples = samples[:, :, 1]
-        out = expr_x.mul(samples)
+            samples = self.compute_softmax(logits, tau)
+            samples = samples[:, :, 1]
+            out = expr_x.mul(samples)
+        else:
+            out = expr_x
         return out
 
     def forward(self, x, tau):

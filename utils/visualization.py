@@ -2,10 +2,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-
-def mkdir(dir_path):
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
+from util import get_psedo_times, mkdir
 
 def plt_setting(fontsz = 10):
     plt.rc('font', family='Arial')
@@ -22,9 +19,23 @@ def plot_2d_features(reduced_reprs, stages, fig_name):
     for sid, stage in enumerate(set(stages)):
         color = cm(1. * sid / n_stage)
         reprs = reduced_reprs[stages_arr == stage, :]
-        ax.scatter(reprs[:, 0], reprs[:, 1], s=8, label=stage, color=color)
+        ax.scatter(reprs[:, 1], reprs[:, 0], s=8, label=stage, color=color)
+    ax.set_title(fig_name)
     ax.legend()
     fig_dir = os.path.join("figures")
     mkdir(fig_dir)
     fig_fp = os.path.join(fig_dir, "%s.pdf" % fig_name)
+    plt.savefig(fig_fp, dpi=300)
+
+def plot_2d_features_pesudo_time(reduced_reprs, samples, args):
+    psedo_times = get_psedo_times(args.dataset_dir, args.dataset, samples)
+    plt_setting()
+    fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+    plt.subplots_adjust(left=0.2, bottom=0.2)
+    points = ax.scatter(reduced_reprs[:, 1], reduced_reprs[:, 0], s=4, c=psedo_times, cmap=plt.get_cmap('YlGn').reversed())
+    fig.colorbar(points)
+    ax.set_title(args.dataset)
+    fig_dir = os.path.join("figures")
+    mkdir(fig_dir)
+    fig_fp = os.path.join(fig_dir, "%s_pseudo-time.pdf" % args.dataset)
     plt.savefig(fig_fp, dpi=300)

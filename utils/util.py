@@ -5,11 +5,19 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
+def mkdir(dir_path):
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+
 def get_data(dataset_dir, dataset):
     expr_fp = os.path.join(dataset_dir, dataset, "%s.txt" % dataset)
     expr_df = pd.read_csv(expr_fp, sep="\t", header=0, index_col=0)
-    expr = expr_df.values.T
-    genes, samples = expr_df.index.tolist(), list(expr_df.columns.values)
+    if dataset == "drosophila":
+        expr = expr_df.values
+        samples, genes = expr_df.index.tolist(), list(expr_df.columns.values)
+    else:
+        expr = expr_df.values.T
+        genes, samples = expr_df.index.tolist(), list(expr_df.columns.values)
     return expr, genes, samples
 
 def get_labels(dataset_dir, dataset, samples):
@@ -19,7 +27,6 @@ def get_labels(dataset_dir, dataset, samples):
             ssplit = sample.split(".")
             if ssplit[1] in ["early", "late"]:
                 stage = "%s_%s" % (ssplit[0], ssplit[1])
-                stage_arr.append(stage)
             else:
                 stage = ssplit[0]
             stage_arr.append(stage)
@@ -32,7 +39,14 @@ def get_labels(dataset_dir, dataset, samples):
         stage_arr = [stages[sample_dict[sample]] for sample in sample_names]
     return stage_arr
 
-
+def get_psedo_times(dataset_dir, dataset, samples):
+    label_fp = os.path.join(dataset_dir, dataset, "%s_info.tsv" % dataset)
+    label_df = pd.read_csv(label_fp, sep="\t", header=0, index_col=0)
+    sample_names = label_df.index.tolist()
+    sample_dict = {sample: sid for sid, sample in enumerate(samples)}
+    pseudo_times = label_df.values[:, 13].flatten()
+    pseudo_times_arr = [pseudo_times[sample_dict[sample]] for sample in sample_names]
+    return pseudo_times_arr
 def preprocess_data(expr, log, scale):
     expr[expr < 0] = 0.0
     if log:
@@ -75,12 +89,13 @@ def train(vasc, optimizer, train_loader, model_fp, args):
         if train_loss > min_loss:
             patience += 1
         else:
-            torch.save(vasc.state_dict(), model_fp)
-            print("Saved model at epoch %d with min_loss: %.0f" % (epoch + 1, min_loss))
             patience = 0
-        if epoch % 20 == 1:
+        if epoch % 10 == 1:
             print("Epoch %d/%d" % (epoch + 1, epochs))
             print("Loss:" + str(train_loss))
+            if patience == 0:
+                torch.save(vasc.state_dict(), model_fp)
+                print("Saved model at epoch %d with min_loss: %.0f" % (epoch + 1, min_loss))
         if patience > args.patience and epoch > args.min_stop:
             break
 
@@ -100,3 +115,9 @@ def evaluate(vasc, expr, model_fp, args):
     _ = vasc(expr, args.min_tau)
     reduced_reprs = activation['z_mean'].detach().cpu().numpy()
     return reduced_reprs
+
+def save_features(reduced_reprs, feature_dir, dataset):
+    feature_fp = os.path.join(feature_dir, "%s.tsv" % dataset)
+    mkdir(feature_dir)
+    np.savetxt(feature_fp, reduced_reprs[:], fmt='%f\t%f')
+    print("Features saved successful! %s" % feature_fp)

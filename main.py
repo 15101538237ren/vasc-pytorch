@@ -5,8 +5,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import TensorDataset, DataLoader
 from models.vasc import VASC
 from utils.config import get_args
-from utils.util import get_data,get_labels , preprocess_data, train, evaluate
-from utils.visualization import plot_2d_features
+from utils.util import get_data,get_labels , preprocess_data, train, evaluate, save_features
+from utils.visualization import plot_2d_features, plot_2d_features_pesudo_time
 args = get_args()
 model_fp = os.path.join("data", "models", "%s.pt" % args.dataset)
 cuda = torch.cuda.is_available()
@@ -21,7 +21,6 @@ else:
 #writer = SummaryWriter(args.out_dir)
 
 expr, genes, samples = get_data(args.dataset_dir, args.dataset)
-stages = get_labels(args.dataset_dir, args.dataset, samples)
 expr = preprocess_data(expr, args.log, args.scale)
 n_cell, n_gene = expr.shape
 expr_t = torch.Tensor(expr)
@@ -32,4 +31,10 @@ optimizer = torch.optim.RMSprop(vasc.parameters(), lr=args.lr)
 if args.train:
     train(vasc, optimizer, train_loader, model_fp, args)
 reduced_reprs = evaluate(vasc, expr_t, model_fp, args)
-plot_2d_features(reduced_reprs, stages, fig_name=args.dataset)
+if args.save_features:
+    save_features(reduced_reprs, os.path.join(args.dataset_dir, args.feature_dir), args.dataset)
+if args.plot_stage:
+    stages = get_labels(args.dataset_dir, args.dataset, samples)
+    plot_2d_features(reduced_reprs, stages, fig_name=args.dataset)
+if args.pseudo_time:
+    plot_2d_features_pesudo_time(reduced_reprs, samples, args)

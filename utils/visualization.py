@@ -28,14 +28,14 @@ def plot_2d_features(reduced_reprs, stages, fig_name):
     plt.savefig(fig_fp, dpi=300)
 
 def plot_2d_features_pesudo_time(reduced_reprs, samples, args):
-    psedo_times = get_psedo_times(args.dataset_dir, args.dataset, samples)
+    #psedo_times = get_psedo_times(args.dataset_dir, args.dataset, samples)
     plt_setting()
     fig, ax = plt.subplots(1, 1, figsize=(4, 4))
     plt.subplots_adjust(left=0.2, bottom=0.2)
-    points = ax.scatter(reduced_reprs[:, 1], reduced_reprs[:, 0], s=4, c=psedo_times, cmap=plt.get_cmap('YlGn').reversed())
-    fig.colorbar(points)
+    points = ax.scatter(reduced_reprs[:, 1], reduced_reprs[:, 0], s=4) #@, c=1, cmap=plt.get_cmap('YlGn').reversed()
+#    fig.colorbar(points)
     ax.set_title(args.dataset)
     fig_dir = os.path.join("figures")
     mkdir(fig_dir)
-    fig_fp = os.path.join(fig_dir, "%s_pseudo-time.pdf" % args.dataset)
+    fig_fp = os.path.join(fig_dir, "%s_pseudo_time.pdf" % args.dataset)
     plt.savefig(fig_fp, dpi=300)

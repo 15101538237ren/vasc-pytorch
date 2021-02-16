@@ -47,6 +47,7 @@ def get_psedo_times(dataset_dir, dataset, samples):
     pseudo_times = label_df.values[:, 13].flatten()
     pseudo_times_arr = [pseudo_times[sample_dict[sample]] for sample in sample_names]
     return pseudo_times_arr
+
 def preprocess_data(expr, log, scale):
     expr[expr < 0] = 0.0
     if log:
@@ -119,5 +120,5 @@ def evaluate(vasc, expr, model_fp, args):
 def save_features(reduced_reprs, feature_dir, dataset):
     feature_fp = os.path.join(feature_dir, "%s.tsv" % dataset)
     mkdir(feature_dir)
-    np.savetxt(feature_fp, reduced_reprs[:], fmt='%f\t%f')
+    np.savetxt(feature_fp, reduced_reprs[:, :], delimiter="\t")
     print("Features saved successful! %s" % feature_fp)

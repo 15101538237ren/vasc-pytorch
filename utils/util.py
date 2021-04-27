@@ -3,7 +3,9 @@ import os
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+from scipy.spatial import distance
 
 def mkdir(dir_path):
     if not os.path.exists(dir_path):
@@ -57,18 +59,27 @@ def preprocess_data(expr, log, scale):
             expr[i, :] = expr[i, :] / np.max(expr[i, :])
     return expr
 
-def loss_function(recon_x, x, mu, log_var, var=False):
-    in_dim = x.shape[1]
-    BCE = in_dim * F.binary_cross_entropy(recon_x, x, reduction='mean')
-    if var:
+def loss_function(recon_x, x, mu, log_var, spatial_distances, feature_thrshold, spatial_thrshold, args):
+    n, in_dim = x.shape
+    loss = nn.BCELoss(reduction="mean")
+    BCE = in_dim * loss(recon_x, x)
+
+    if args.var:
         KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp(), dim=-1)
     else:
         var_ones = torch.ones(log_var.size()).cuda()
         KLD = -0.5 * torch.sum(1 + 1 - mu.pow(2) - torch.exp(var_ones), dim=-1)
     KLD = torch.mean(KLD)
-    return BCE + KLD, KLD # reconstruction error + KL divergence losses
+    if args.spatial:
+        f_dists = torch.cdist(mu, mu, p=2) # feature distances
+        f_dists_transformed = torch.exp(-(torch.div(f_dists, feature_thrshold)).pow(4))
+        s_dists_transformed = torch.ones(spatial_distances.size()).cuda() - torch.exp(-(torch.div(spatial_distances, spatial_thrshold)).pow(4))
+        dist_penalty = torch.mul(torch.div(torch.sum(torch.mul(f_dists_transformed, s_dists_transformed)), n*n), 1000.0)
+        return BCE + KLD + dist_penalty # reconstruction error + KL divergence losses
+    else:
+        return BCE + KLD
 
-def train(vasc, optimizer, train_loader, model_fp, args):
+def train(vasc, optimizer, train_loader, model_fp, spatial_dists, feature_thrshold, spatial_thrshold, args):
     vasc.train()
     epochs = args.epochs
     min_loss = np.inf
@@ -80,9 +91,11 @@ def train(vasc, optimizer, train_loader, model_fp, args):
             print("tau = %.2f" % tau)
         for batch_idx, data in enumerate(train_loader):
             data = data[0].cuda()
+            sidx, eidx = args.batch_size * batch_idx, args.batch_size * (batch_idx + 1)
+            s_dists = spatial_dists[sidx: eidx, sidx: eidx].cuda()
             optimizer.zero_grad()
             recon_batch, mu, log_var = vasc.forward(data, tau)
-            loss, kld = loss_function(recon_batch, data, mu, log_var)
+            loss = loss_function(recon_batch, data, mu, log_var, s_dists, feature_thrshold, spatial_thrshold, args)
             loss.backward()
             train_loss += loss.item()
             optimizer.step()

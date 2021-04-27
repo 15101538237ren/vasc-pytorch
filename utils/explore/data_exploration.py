@@ -38,12 +38,12 @@ def get_highly_variable_genes_and_expr(dataset_dir, dataset):
         df.to_csv(expr_highly_variable_fp, sep="\t")
         print("Save sucessful!")
 def hist_pipeline():
-    spatial_dists = np.load("../data/drosophila/drosophila_spatial_dist.npy")
+    spatial_dists = np.load("../../data/drosophila/drosophila_spatial_dist.npy")
     spatial_hist_fp = "../figures/drosophila_spatial_hist.pdf"
     plot_hist(spatial_dists[np.triu_indices(spatial_dists.shape[0])], spatial_hist_fp, "Drosophila Spatial Hist",
               "Spatial Distance", "Freq")
 
-    features = pd.read_csv("../data/features/drosophila.tsv", sep="\t", header=0, index_col=0).values
+    features = pd.read_csv("../../data/features/drosophila.tsv", sep="\t", header=0, index_col=0).values
     feature_dists = distance.cdist(features, features, 'euclidean')
     feature_hist_fp = "../figures/drosophila_feature_hist.pdf"
     plot_hist(feature_dists[np.triu_indices(feature_dists.shape[0])], feature_hist_fp, "Drosophila Feature Hist",

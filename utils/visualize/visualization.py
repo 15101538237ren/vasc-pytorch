@@ -2,7 +2,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from util import get_psedo_times, mkdir
+from utils.util import get_psedo_times, mkdir
 
 def plt_setting(fontsz = 10):
     plt.rc('font', family='Arial')

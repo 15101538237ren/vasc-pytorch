@@ -2,14 +2,22 @@
 import os
 import torch
 import numpy as np
+from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import TensorDataset, DataLoader
 from models.vasc import VASC
 from utils.config import get_args
 from utils.util import get_data,get_labels , preprocess_data, train, evaluate, save_features
-from utils.visualize.visualization import plot_2d_features, plot_2d_features_pesudo_time
+from utils.visualization import plot_2d_features, plot_2d_features_pesudo_time
 
 args = get_args()
 
+max_feature_dist = 3.
+n_sections = 10
+feature_dist_thresholds = np.arange(0, max_feature_dist*1.05, max_feature_dist/n_sections)
+max_spatial_dist = 300.
+spatial_dist_thresholds = np.arange(0, max_spatial_dist*1.05, max_spatial_dist/n_sections)
+
+for ni in range(n_sections):
 model_fp = os.path.join("data", "models", "%s.pt" % args.dataset)
 cuda = torch.cuda.is_available()
 device = torch.device("cuda:%d" % args.gpu if cuda else "cpu")

@@ -9,6 +9,7 @@ parser.add_argument('--train', type=bool, default=True)
 parser.add_argument('--log', type=bool, default=True)
 parser.add_argument('--scale', type=bool, default=True)
 parser.add_argument('--var', type=bool, default=True)
+parser.add_argument('--spatial', type=bool, default=True) # Whether spatial constraints are added
 
 parser.add_argument('--arch', type=str, default='vasc', choices=['vasc'])
 parser.add_argument('--dataset_dir', type=str, default='data')

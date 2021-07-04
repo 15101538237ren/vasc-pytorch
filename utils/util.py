@@ -4,29 +4,112 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import scanpy as sc
+import squidpy as sq
 from scipy.spatial import distance
 
 SPATIAL_N_FEATURE_MAX = 100.0
 SPATIAL_THRESHOLD = 50.0
 FEATURE_THRESHOLD = 50.0
+VISIUM_DATASETS = [
+        "V1_Breast_Cancer_Block_A_Section_1", "V1_Breast_Cancer_Block_A_Section_2",
+        "V1_Human_Heart", "V1_Human_Lymph_Node", "V1_Mouse_Kidney", "V1_Mouse_Brain_Sagittal_Posterior",
+        "V1_Mouse_Brain_Sagittal_Posterior_Section_2", "V1_Mouse_Brain_Sagittal_Anterior",
+        "V1_Mouse_Brain_Sagittal_Anterior_Section_2", "V1_Human_Brain_Section_2",
+        "V1_Adult_Mouse_Brain_Coronal_Section_1", "V1_Adult_Mouse_Brain_Coronal_Section_2",
+        "Targeted_Visium_Human_Cerebellum_Neuroscience", "Parent_Visium_Human_Cerebellum",
+        "Targeted_Visium_Human_SpinalCord_Neuroscience", "Parent_Visium_Human_SpinalCord",
+        "Targeted_Visium_Human_Glioblastoma_Pan_Cancer", "Parent_Visium_Human_Glioblastoma",
+        "Targeted_Visium_Human_BreastCancer_Immunology", "Parent_Visium_Human_BreastCancer",
+        "Targeted_Visium_Human_OvarianCancer_Pan_Cancer", "Targeted_Visium_Human_OvarianCancer_Immunology",
+        "Parent_Visium_Human_OvarianCancer", "Targeted_Visium_Human_ColorectalCancer_GeneSignature",
+        "Parent_Visium_Human_ColorectalCancer"
+     ]
+SQUIDPY_DATASETS = ["seqfish", "imc"]
+SPATIAL_LIBD_DATASETS = ["Spatial_LIBD_%s" % item for item in ["151507", "151508", "151509", "151510", "151669", "151670", "151671", "151672", "151673", "151674", "151675", "151676"]]
 def mkdir(dir_path):
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
 
-def get_data(dataset_dir, dataset, ncells):
+def get_spatial_coords(args):
+    dataset_dir = args.dataset_dir
+    dataset = args.dataset
+    if dataset in ["Kidney", "Liver"]:
+        coord_fp = os.path.join(dataset_dir, dataset, "%s.idx" % dataset)
+        coords = pd.read_csv(coord_fp, header=0, index_col=0).values[:, 1:]
+        return coords
+    elif dataset in SQUIDPY_DATASETS:
+        adata = get_squidpy_data(dataset)
+
+    elif dataset in SPATIAL_LIBD_DATASETS:
+        expr_dir = os.path.join(dataset_dir, dataset)
+        adata = sc.read_10x_mtx(expr_dir)
+        coord_fp = os.path.join(expr_dir, "spatial_coords.csv")
+        coord_df = pd.read_csv(coord_fp).values.astype(float)
+        adata.obsm['spatial'] = coord_df
+    else:
+        adata = sc.datasets.visium_sge(dataset)
+    sc.pp.filter_genes(adata, min_counts=1)  # only consider genes with more than 1 count
+    sc.pp.normalize_per_cell(adata, key_n_counts='n_counts_all')  # normalize with total UMI count per cell
+    filter_result = sc.pp.filter_genes_dispersion(adata.X, flavor='cell_ranger',
+                                                  log=False)  # select highly-variable genes
+    adata = adata[:, filter_result.gene_subset]  # subset the genes
+    sc.pp.normalize_per_cell(adata)  # renormalize after filtering
+    sc.pp.log1p(adata)  # log transform: adata.X = log(adata.X + 1)
+    coords = adata.obsm['spatial']
+    return coords
+
+def get_squidpy_data(dataset):
+    if dataset == "seqfish":
+        adata = sq.datasets.seqfish()
+    else:
+        adata = sq.datasets.imc()
+    return adata
+
+def get_data(args):
+    dataset_dir = args.dataset_dir
+    dataset = args.dataset
     if dataset in ["Kidney", "Liver"]:
         expr_fp = os.path.join(dataset_dir, dataset, "%s.count.csv" % dataset)
-        expr_df = pd.read_csv(expr_fp, header=0, index_col=0)
-        expr = expr_df.values.T[:ncells,:]
-        genes, samples = expr_df.index.tolist(), list(expr_df.columns.values)[:ncells]
+        expr_df = pd.read_csv(expr_fp, header=False, index_col=0)
+        expr = expr_df.values.T
+        genes, cells = expr_df.index.tolist(), list(expr_df.columns.values)
 
         coord_fp = os.path.join(dataset_dir, dataset, "%s.idx" % dataset)
-        coords = pd.read_csv(coord_fp, header=0, index_col=0).values[:ncells, 1:]
+        coords = pd.read_csv(coord_fp, header=0, index_col=0).values[:, 1:]
         spatial_dists = distance.cdist(coords, coords, 'euclidean')
         spatial_dists = (spatial_dists/np.max(spatial_dists)) * SPATIAL_N_FEATURE_MAX
-        return expr, genes, samples, spatial_dists
+        expr = preprocess_data(expr, args.log, args.scale)
+        return expr, genes, cells, spatial_dists
+    elif dataset in SQUIDPY_DATASETS:
+        adata = get_squidpy_data(dataset)
+    elif dataset in SPATIAL_LIBD_DATASETS:
+        expr_dir = os.path.join(dataset_dir, dataset)
+        adata = sc.read_10x_mtx(expr_dir)
+        coord_fp = os.path.join(expr_dir,"spatial_coords.csv")
+        coord_df = pd.read_csv(coord_fp).values.astype(float)
+        adata.obsm['spatial'] = coord_df
     else:
-        return [], [], [], []
+        adata = sc.datasets.visium_sge(dataset)
+
+    sc.pp.filter_genes(adata, min_counts=1)  # only consider genes with more than 1 count
+    sc.pp.normalize_per_cell(adata, key_n_counts='n_counts_all')# normalize with total UMI count per cell
+    filter_result = sc.pp.filter_genes_dispersion(adata.X, flavor='cell_ranger', log=False)# select highly-variable genes
+    adata = adata[:, filter_result.gene_subset]  # subset the genes
+
+    genes = adata.var_names
+    cells = adata.obs_names
+    sc.pp.normalize_per_cell(adata)  # renormalize after filtering
+    sc.pp.log1p(adata)  # log transform: adata.X = log(adata.X + 1)
+    if type(adata.X).__module__ != np.__name__:
+        expr = adata.X.todense()
+    else:
+        expr = adata.X
+
+    coords = adata.obsm['spatial']
+    spatial_dists = distance.cdist(coords, coords, 'euclidean')
+    spatial_dists = (spatial_dists / np.max(spatial_dists)) * SPATIAL_N_FEATURE_MAX
+    return expr, genes, cells, spatial_dists
 
 def get_labels(dataset_dir, dataset, samples):
     if dataset == "petropoulus":
@@ -79,9 +162,14 @@ def loss_function(recon_x, x, mu, log_var, spatial_distances, args):
     if args.spatial:
         f_dists = torch.cdist(mu, mu, p=2) # feature distances
         f_dists = torch.mul(torch.div(f_dists, torch.max(f_dists)), SPATIAL_N_FEATURE_MAX)
-        f_dists_transformed = torch.exp(-(torch.div(f_dists, FEATURE_THRESHOLD)).pow(4))
-        s_dists_transformed = torch.ones(spatial_distances.size()).cuda() - torch.exp(-(torch.div(spatial_distances, SPATIAL_THRESHOLD)).pow(4))
-        dist_penalty = torch.mul(torch.div(torch.sum(torch.mul(f_dists_transformed, s_dists_transformed)), n*n), 500.0)
+        if args.linear_penalty:
+            f_dists_transformed = -f_dists + SPATIAL_N_FEATURE_MAX
+            s_dists_transformed = spatial_distances
+            dist_penalty = torch.div(torch.sum(torch.mul(f_dists_transformed, s_dists_transformed)), n * n)
+        else:
+            f_dists_transformed = torch.exp(-(torch.div(f_dists, FEATURE_THRESHOLD)).pow(4))
+            s_dists_transformed = torch.ones(spatial_distances.size()).cuda() - torch.exp(-(torch.div(spatial_distances, SPATIAL_THRESHOLD)).pow(4))
+            dist_penalty = torch.mul(torch.div(torch.sum(torch.mul(f_dists_transformed, s_dists_transformed)), n*n), 500.0)
         return BCE + KLD + dist_penalty # reconstruction error + KL divergence losses
     else:
         return BCE + KLD
@@ -137,8 +225,8 @@ def evaluate(vasc, expr, model_fp, args):
     reduced_reprs = activation['z_mean'].detach().cpu().numpy()
     return reduced_reprs
 
-def save_features(reduced_reprs, feature_dir, dataset):
-    feature_fp = os.path.join(feature_dir, "%s.tsv" % dataset)
+def save_features(reduced_reprs, feature_dir, name):
+    feature_fp = os.path.join(feature_dir, "%s.tsv" % name)
     mkdir(feature_dir)
     np.savetxt(feature_fp, reduced_reprs[:, :], delimiter="\t")
     print("Features saved successful! %s" % feature_fp)

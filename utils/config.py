@@ -4,7 +4,7 @@ import argparse
 parser = argparse.ArgumentParser()
 
 # params to change
-parser.add_argument('--gpu', type=int, default=3)
+parser.add_argument('--gpu', type=int, default=2)
 parser.add_argument('--train', type=bool, default=True)
 parser.add_argument('--log', type=bool, default=True)
 parser.add_argument('--linear_penalty', type=bool, default=True)

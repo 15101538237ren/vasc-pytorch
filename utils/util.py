@@ -13,21 +13,27 @@ SPATIAL_N_FEATURE_MAX = 1.0
 SPATIAL_THRESHOLD = 0.5
 FEATURE_THRESHOLD = 0.5
 VISIUM_DATASETS = [
-    "V1_Breast_Cancer_Block_A_Section_1", "V1_Breast_Cancer_Block_A_Section_2",
-        "V1_Human_Heart", "V1_Human_Lymph_Node",  "V1_Mouse_Brain_Sagittal_Posterior",
-        "V1_Mouse_Brain_Sagittal_Posterior_Section_2", "V1_Mouse_Brain_Sagittal_Anterior",
-        "V1_Mouse_Brain_Sagittal_Anterior_Section_2", "V1_Human_Brain_Section_2",
-        "V1_Adult_Mouse_Brain_Coronal_Section_1", "V1_Adult_Mouse_Brain_Coronal_Section_2",
-        "Targeted_Visium_Human_SpinalCord_Neuroscience", "Parent_Visium_Human_SpinalCord",
-        "Targeted_Visium_Human_Glioblastoma_Pan_Cancer", "Parent_Visium_Human_Glioblastoma",
-         "Parent_Visium_Human_BreastCancer",
-        "Parent_Visium_Human_OvarianCancer", "Targeted_Visium_Human_ColorectalCancer_GeneSignature",
-        "Parent_Visium_Human_ColorectalCancer", "V1_Mouse_Kidney",
+    "V1_Mouse_Brain_Sagittal_Posterior",
+    "V1_Breast_Cancer_Block_A_Section_1",
         "Targeted_Visium_Human_Cerebellum_Neuroscience", "Parent_Visium_Human_Cerebellum", "Targeted_Visium_Human_BreastCancer_Immunology","Targeted_Visium_Human_OvarianCancer_Pan_Cancer",
-        "Targeted_Visium_Human_OvarianCancer_Immunology",
+        "Targeted_Visium_Human_OvarianCancer_Immunology"
 ]
+
+#
+# , "V1_Breast_Cancer_Block_A_Section_2",
+#         "V1_Human_Heart", "V1_Human_Lymph_Node",  "V1_Mouse_Brain_Sagittal_Posterior",
+#         "V1_Mouse_Brain_Sagittal_Posterior_Section_2", "V1_Mouse_Brain_Sagittal_Anterior",
+#         "V1_Mouse_Brain_Sagittal_Anterior_Section_2",
+# "V1_Human_Brain_Section_2",
+#         "V1_Adult_Mouse_Brain_Coronal_Section_1", "V1_Adult_Mouse_Brain_Coronal_Section_2",
+#         "Targeted_Visium_Human_SpinalCord_Neuroscience", "Parent_Visium_Human_SpinalCord",
+#         "Targeted_Visium_Human_Glioblastoma_Pan_Cancer", "Parent_Visium_Human_Glioblastoma",
+#          "Parent_Visium_Human_BreastCancer",
+#         "Parent_Visium_Human_OvarianCancer", "Targeted_Visium_Human_ColorectalCancer_GeneSignature",
+#         "Parent_Visium_Human_ColorectalCancer", "V1_Mouse_Kidney",
+
 SQUIDPY_DATASETS = ["seqfish", "imc"]
-SPATIAL_LIBD_DATASETS = ["Spatial_LIBD_%s" % item for item in ["151507", "151509", "151672"]]#, "151508", "151509", "151510", "151669", "151670", "151671", "151672", "151673", "151674", "151675", "151676"]]#
+SPATIAL_LIBD_DATASETS = ["Spatial_LIBD_%s" % item for item in ["151508", "151509", "151510", "151669", "151670", "151671", "151673", "151674", "151675"]]#, "151672", "151676", "151507"]]#["151507"]]#
 def mkdir(dir_path):
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
@@ -41,7 +47,6 @@ def get_spatial_coords(args):
         return coords
     elif dataset in SQUIDPY_DATASETS:
         adata = get_squidpy_data(dataset)
-
     elif dataset in SPATIAL_LIBD_DATASETS:
         expr_dir = os.path.join(dataset_dir, dataset)
         adata = sc.read_10x_mtx(expr_dir)
@@ -101,6 +106,13 @@ def get_data(args):
             for i in range(expr.shape[0]):
                 expr[i, :] = expr[i, :] / np.max(expr[i, :])
         return expr, genes, cells, spatial_dists
+    elif dataset == "drosophila":
+        expr_fp = os.path.join(dataset_dir, dataset, "%s.txt" % dataset)
+        expr_df = pd.read_csv(expr_fp, sep="\t", header=0, index_col=0)
+        expr = expr_df.values
+        cells, genes = expr_df.index.tolist(), list(expr_df.columns.values)
+        spatial_dists = torch.from_numpy(np.load(os.path.join(dataset_dir, dataset, "spatial_dist.npy")))
+        return expr, genes, cells, spatial_dists
     elif dataset in SQUIDPY_DATASETS:
         adata = get_squidpy_data(dataset)
     elif dataset in SPATIAL_LIBD_DATASETS:
@@ -157,47 +169,57 @@ def loss_function(recon_x, x, mu, log_var, spatial_distances, args):
     KLD = torch.mean(KLD)
     VAE_Loss = BCE + KLD
     if args.spatial:
-        f_dists = torch.cdist(mu, mu, p=2) # feature distances
+        # p_nominator = spatial_distances.cuda()#torch.exp(-torch.div(spatial_distances, args.sigma_sq)).cuda()
+        # nrow, ncol = spatial_distances.shape
+        # mask = torch.eye(nrow, dtype=torch.bool).cuda()
+        # p_nominator = p_nominator[~mask].view(-1, ncol - 1)
+        # p_dominator = torch.transpose(torch.broadcast_to(torch.sum(p_nominator, 1).cuda(), (nrow - 1, ncol)), 0, 1)
+        # pji = torch.div(p_nominator, p_dominator)
+        #
+        f_dists = torch.cdist(mu, mu, p=2).cuda() # feature distances
         f_dists = torch.mul(torch.div(f_dists, torch.max(f_dists)), SPATIAL_N_FEATURE_MAX)
+        # q_nominator = f_dists.cuda()#torch.exp(-f_dists).cuda()
+        # q_nominator = q_nominator[~mask].view(-1, ncol - 1)
+        # q_dominator = torch.transpose(torch.broadcast_to(torch.sum(q_nominator, 1).cuda(), (nrow - 1, ncol)), 0, 1)
+        # qji = torch.div(q_nominator, q_dominator)
+        #
+        # kl_sf = torch.mul(torch.sum(torch.mul(pji, torch.log(torch.div(pji, qji)))), 0.2)
 
         dist_penalty_1 = torch.div(torch.sum(torch.mul(SPATIAL_N_FEATURE_MAX - f_dists, spatial_distances)), n * n)
         dist_penalty_2 = torch.div(torch.sum(torch.mul(SPATIAL_N_FEATURE_MAX - spatial_distances, f_dists)), n * n)
-        dist_penalty = torch.mul(dist_penalty_1, 500) + torch.mul(dist_penalty_2, 200)
-        # dist_penalty_3 = torch.div(torch.sum(torch.mul(SPATIAL_N_FEATURE_MAX - spatial_distances, SPATIAL_N_FEATURE_MAX - f_dists)), n * n)
-
+        # dist_penalty_3 = torch.div(torch.sum(torch.mul(spatial_distances, f_dists)), n * n)
+        #
         # diagnal_mask = torch.eye(f_dists.shape[0], dtype=torch.bool).cuda()
-        # spatial_closed_mask = spatial_distances.le(0.1)
+        # spatial_closed_mask = spatial_distances.le(0.25)
         # feature_close_mask = f_dists.le(0.25)
-        #
-        # spatial_far_mask = spatial_distances.ge(0.25)
-        # feature_far_mask = f_dists.ge(0.7)
-        #
+
+        # spatial_far_mask = spatial_distances.ge(0.7)
+        # feature_far_mask = f_dists.ge(0.6)
+
         # feature_close_spatial_far = torch.logical_and(torch.logical_and(spatial_far_mask, feature_close_mask), ~diagnal_mask)
         # dist_1 = torch.mul(SPATIAL_N_FEATURE_MAX - f_dists, spatial_distances)
         # dist_penalty_11 = torch.div(torch.nansum(dist_1[feature_close_spatial_far]), torch.nansum(feature_close_spatial_far))
         # dist_penalty_11 = 0.0 if torch.isnan(dist_penalty_11) else dist_penalty_11
-        #
+
         # spatial_close_feature_far = torch.logical_and(torch.logical_and(spatial_closed_mask, feature_far_mask), ~diagnal_mask)
         # dist_2 = torch.mul(SPATIAL_N_FEATURE_MAX - spatial_distances, f_dists)
-        # dist_penalty_22 = -torch.div(torch.nansum(dist_2[spatial_close_feature_far]), torch.nansum(spatial_close_feature_far))
+        # dist_penalty_22 = torch.div(torch.nansum(dist_2[spatial_close_feature_far]), torch.nansum(spatial_close_feature_far))
         # dist_penalty_22 = 0.0 if torch.isnan(dist_penalty_22) else dist_penalty_22
-        #
+
         # both_closed_mask = torch.logical_and(torch.logical_and(spatial_closed_mask, feature_close_mask), ~diagnal_mask)
         # dist_3 = torch.mul(spatial_distances, f_dists)
         # dist_penalty_33 = torch.div(torch.nansum(dist_3[both_closed_mask]), torch.nansum(both_closed_mask))
         # dist_penalty_33 = 0.0 if torch.isnan(dist_penalty_33) else dist_penalty_33
 
-        #attract_term = torch.div(torch.sum(torch.exp(torch.add(SPATIAL_N_FEATURE_MAX - f_dists, SPATIAL_N_FEATURE_MAX - spatial_distances))), n * n)
-        #repulse_term = torch.mul(torch.div(torch.sum(torch.exp(torch.add(torch.add(SPATIAL_N_FEATURE_MAX - f_dists, spatial_distances)*5.0, torch.add(SPATIAL_N_FEATURE_MAX - spatial_distances, f_dists)*2.0))), n * n), 1.0)
-        #dist_penalty = -torch.log(torch.div(1, repulse_term))
-        # dist_penalty = torch.mul(dist_penalty_1, 500) #+ torch.mul(dist_penalty_3, 200)# + torch.mul(dist_penalty_2, 200)# # + dist_penalty_11 * 50 + dist_penalty_11 * 100 + dist_penalty_22 * 20 + dist_penalty_33*2000
-        # print("1: %.2f, 2: %.2f, 3: %.2f " % (dist_penalty_1*500, dist_penalty_2*200, dist_penalty_3*200))#, dist_penalty_11 * 100, dist_penalty_22 * 20, dist_penalty_33*2000 ))
-        # print("VAE Loss:%.2f, dist_penalty:%.2f" % (VAE_Loss, dist_penalty))
-        return VAE_Loss + dist_penalty# # reconstruction error + KL divergence losses
+        dist_penalty = torch.mul(dist_penalty_1, 500) + torch.mul(dist_penalty_2, -100)# + + torch.mul(dist_penalty_3, -250) + dist_penalty_22*50 #+ dist_penalty_11*20# + dist_penalty_22 * 10 + dist_penalty_33*-500
+        #print("1: %.2f, 2: %.2f, 3: %.2f, 4: %.2f, 5: %.2f, 6: %.2f " % (dist_penalty_1*500, dist_penalty_2*200, dist_penalty_3*-250, dist_penalty_11 * 50, dist_penalty_22 * 20, dist_penalty_33*-1000))
+        #print("BCE Loss:%.2f, KLD: %.2f, kl_sf:%.2f" % (BCE, KLD, kl_sf))
+        # print("BCE Loss:%.2f, kl_sf:%.2f" % (BCE, kl_sf))
+        return VAE_Loss + dist_penalty
     else:
         return VAE_Loss
 
-def train(vasc, optimizer, train_loader, model_fp, spatial_dists, args):
+def train_in_batch(vasc, optimizer, train_loader, model_fp, spatial_dists, args):
     vasc.train()
     epochs = args.epochs
     min_loss = np.inf
@@ -231,6 +253,36 @@ def train(vasc, optimizer, train_loader, model_fp, spatial_dists, args):
         if patience > args.patience and epoch > args.min_stop:
             break
 
+def train(vasc, optimizer, expression_tensor, model_fp, spatial_dists, args):
+    vasc.train()
+    epochs = args.epochs
+    min_loss = np.inf
+    patience = 0
+    for epoch in range(epochs):
+        train_loss = 0
+        if epoch % 150 == 0 and args.annealing:
+            tau = max(args.tau0 * np.exp(-args.anneal_rate * epoch), args.min_tau)
+            print("tau = %.2f" % tau)
+        data = expression_tensor.cuda()
+        optimizer.zero_grad()
+        recon, mu, log_var = vasc.forward(data, tau)
+        loss = loss_function(recon, data, mu, log_var, spatial_dists, args)
+        loss.backward()
+        train_loss += loss.item()
+        optimizer.step()
+        min_loss = min(train_loss, min_loss)
+        if train_loss > min_loss:
+            patience += 1
+        else:
+            patience = 0
+        if epoch % 10 == 1:
+            print("Epoch %d/%d" % (epoch + 1, epochs))
+            print("Loss:" + str(train_loss))
+            if patience == 0:
+                torch.save(vasc.state_dict(), model_fp)
+                print("Saved model at epoch %d with min_loss: %.0f" % (epoch + 1, min_loss))
+        if patience > args.patience and epoch > args.min_stop:
+            break
 
 def evaluate(vasc, expr, model_fp, args):
     activation = {}

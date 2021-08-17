@@ -10,23 +10,29 @@ from utils.config import get_args
 from utils.util import mkdir, get_expr_name, SPATIAL_LIBD_DATASETS, VISIUM_DATASETS
 from sklearn import metrics
 
-def leiden_clustering(args, feature_dir, expr_name, dataset, n_neighbors=30):
+def clustering(args, feature_dir, expr_name, n_neighbors=30, resolution="1.0", clustering_method= "leiden"):
     spatials = [False, True]
-    labels_dir = os.path.join(feature_dir, "leiden_labels")
+    labels_dir = os.path.join(feature_dir, "%s_labels_resolution_%s" % (clustering_method, resolution))
     mkdir(labels_dir)
 
     for sid, spatial in enumerate(spatials):
+        args.spatial = spatial
+        args.expr_name = expr_name
         name = get_expr_name(args)
         feature_fp = os.path.join(feature_dir, "%s.tsv" % name)
-        adata = sc.read_csv(feature_fp, delimiter="\t", first_column_names=None)
+        if os.path.exists(feature_fp):
+            adata = sc.read_csv(feature_fp, delimiter="\t", first_column_names=None)
 
-        # Neighbor Graph
-        sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep='X')
-        sc.tl.leiden(adata)
-        labels = adata.obs["leiden"].cat.codes
-        label_fp = os.path.join(labels_dir, "%s_%s_label.tsv" % (name, expr_name))
-        np.savetxt(label_fp, labels, fmt='%d', header='', footer='', comments='')
-        print("Saved %s succesful!" % label_fp)
+            # Neighbor Graph
+            sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep='X')
+            if clustering_method == "louvain":
+                sc.tl.louvain(adata, resolution=float(resolution))
+            else:
+                sc.tl.leiden(adata, resolution=float(resolution))
+            labels = adata.obs[clustering_method].cat.codes
+            label_fp = os.path.join(labels_dir, "%s_label.tsv" % name)
+            np.savetxt(label_fp, labels, fmt='%d', header='', footer='', comments='')
+            print("Saved %s succesful!" % label_fp)
 
 def adjusted_rand_index_for_spatialLIBD(args, expr_name):
     sns.set(style="whitegrid")
@@ -84,10 +90,18 @@ def adjusted_rand_index_for_spatialLIBD(args, expr_name):
 
 if __name__ == "__main__":
     args = get_args()
-    datasets = SPATIAL_LIBD_DATASETS# +VISIUM_DATASETS #
-    expr_name = args.expr_name
-    for dataset in datasets:
-        args.dataset = dataset
-        feature_dir = os.path.join(args.dataset_dir, "features")
-        leiden_clustering(args, feature_dir, args.dataset, expr_name)
-    #adjusted_rand_index_for_spatialLIBD(args, expr_name)
+    datasets = SPATIAL_LIBD_DATASETS + VISIUM_DATASETS #SPATIAL_LIBD_DATASETS +
+    expr_names = ["500_penalty1", "500_penalty1_-100_penalty2"]#["-100_penalty2", "-500_penalty2", "-1000_penalty2", "200_penalty1", "1000_penalty1",
+                 # "500_penalty1_100_penalty2", "500_penalty1_-50_penalty2", "500_penalty1_200_penalty2"]
+    resolutions = ["1.0", "0.8"]
+    clustering_methods = ["leiden"]#, "louvain"
+    for resolution in resolutions:
+        for method in clustering_methods:
+            for dataset in datasets:
+                for expr_name in expr_names:
+                    args.dataset = dataset
+                    feature_dir = os.path.join(args.dataset_dir, "features")
+                    clustering(args, feature_dir, expr_name, resolution=resolution, clustering_method=method)
+
+    # for expr_name in expr_names:
+    #     adjusted_rand_index_for_spatialLIBD(args, expr_name)

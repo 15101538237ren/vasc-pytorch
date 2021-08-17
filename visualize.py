@@ -20,7 +20,7 @@ def plt_setting(fontsz = 10):
     plt.rc('xtick', labelsize=fontsz)  # fontsize of the tick labels
     plt.rc('ytick', labelsize=fontsz)  # fontsize of the tick labels
 
-def plot_spatial_cord_with_pseudo_time(figure_dir, feature_dir, spatial_cords, dataset, root_idx= 50, VASC=True, n_neighbors=10):
+def plot_spatial_cord_with_pseudo_time(figure_dir, feature_dir, expr_name, spatial_cords, dataset, root_idx= 50, VASC=True, n_neighbors=10):
     fig_dir = os.path.join(figure_dir, dataset)
     mkdir(fig_dir)
 
@@ -37,6 +37,8 @@ def plot_spatial_cord_with_pseudo_time(figure_dir, feature_dir, spatial_cords, d
     marker_sz = 4 if dataset != "seqfish" else 0.5
     for sid, spatial in enumerate(spatials):
         ax = axs[sid]
+        args.spatial = spatial
+        args.expr_name = expr_name
         name = get_expr_name(args)
         title = titles[sid]
         feature_fp = os.path.join(feature_dir, "%s.tsv" % name)
@@ -53,7 +55,9 @@ def plot_spatial_cord_with_pseudo_time(figure_dir, feature_dir, spatial_cords, d
         # Neighbor Graph
         sc.pp.neighbors(adata, n_neighbors=n_neighbors)
         sc.tl.umap(adata)
-        adata.uns['iroot'] = root_idx
+        xs, ys = adata.obsm["X_umap"][:, 0], adata.obsm["X_umap"][:, 1]
+        distances = np.sqrt(np.power((xs - xs.min()), 2) + np.power((ys - ys.min()), 2))
+        adata.uns['iroot'] = np.argmin(distances)
         sc.tl.dpt(adata)
         ax.grid(False)
 
@@ -91,7 +95,7 @@ def plot_spatial_cord_with_pseudo_time(figure_dir, feature_dir, spatial_cords, d
     fig_fp = os.path.join(fig_dir, "%s.pdf" % dataset)
     plt.savefig(fig_fp, dpi=300)
 
-def plot_spatial_vs_feature_dist_colored_pseudo_time(figure_dir, feature_dir, spatial_cords, dataset, root_idx=50, n_neighbors=20, ncells=100):
+def plot_spatial_vs_feature_dist_colored_pseudo_time(figure_dir, feature_dir, expr_name, spatial_cords, dataset, root_idx=50, n_neighbors=20, ncells=100):
     cm = plt.get_cmap('gist_rainbow')
     fig_dir = os.path.join(figure_dir, dataset)
     mkdir(fig_dir)
@@ -112,6 +116,8 @@ def plot_spatial_vs_feature_dist_colored_pseudo_time(figure_dir, feature_dir, sp
     marker_sz = 4 if dataset != "seqfish" else 0.5
 
     for sid, spatial in enumerate(spatials):
+        args.spatial = spatial
+        args.expr_name = expr_name
         name = get_expr_name(args)
         feature_fp = os.path.join(feature_dir, "%s.tsv" % name)
         vals = pd.read_csv(feature_fp, sep="\t", header=None).values[coords_ind, :]
@@ -124,7 +130,9 @@ def plot_spatial_vs_feature_dist_colored_pseudo_time(figure_dir, feature_dir, sp
         # Neighbor Graph
         sc.pp.neighbors(adata, n_neighbors=n_neighbors)
         sc.tl.umap(adata)
-        adata.uns['iroot'] = root_idx
+        xs, ys = adata.obsm["X_umap"][:, 0], adata.obsm["X_umap"][:, 1]
+        distances = np.sqrt(np.power((xs - xs.min()), 2) + np.power((ys - ys.min()), 2))
+        adata.uns['iroot'] = np.argmin(distances)
         sc.tl.dpt(adata)
         pseudotime = np.array(adata.obs['dpt_pseudotime'].tolist()).reshape((-1, 1))
         pseudotime_dists = distance.cdist(pseudotime, pseudotime, 'euclidean')
@@ -159,11 +167,14 @@ def plot_spatial_vs_feature_dist_colored_pseudo_time(figure_dir, feature_dir, sp
     fig_fp = os.path.join(fig_dir, "%s_dist_scatter.pdf" % dataset)
     plt.savefig(fig_fp, dpi=300)
 
-def plot_umap_clustering(figure_dir, feature_dir, expr_name, spatial_cords, dataset, n_neighbors=10):
-    fig_dir = os.path.join(figure_dir, dataset)
+def plot_umap_clustering(figure_dir, feature_dir, expr_name, dataset, n_neighbors=10):
+    fig_dir = os.path.join(figure_dir, dataset, "umap")
     mkdir(fig_dir)
     fig_fp = os.path.join(fig_dir, "%s_%s.pdf" % (dataset, expr_name))
 
+    if os.path.exists(fig_fp):
+        print("%s exist: pass" % fig_fp)
+        return
     plt_setting()
     fig, axs = plt.subplots(1, 2, figsize=(8, 4))
     plt.subplots_adjust(wspace=0.4, hspace=0.5, bottom=0.2)
@@ -173,6 +184,8 @@ def plot_umap_clustering(figure_dir, feature_dir, expr_name, spatial_cords, data
     for sid, spatial in enumerate(spatials):
         ax = axs[sid]
         title = titles[sid]
+        args.spatial = spatial
+        args.expr_name = expr_name
         name = get_expr_name(args)
         feature_fp = os.path.join(feature_dir, "%s.tsv" % name)
         adata = sc.read_csv(feature_fp, delimiter="\t", first_column_names=None)
@@ -193,12 +206,16 @@ def plot_umap_clustering(figure_dir, feature_dir, expr_name, spatial_cords, data
     plt.savefig(fig_fp, dpi=300)
     plt.close('all')
 
-def plot_cluster_on_img(args, feature_dir, expr_name, spatial_cords, dataset, scale= 0.045):
+def plot_cluster_on_img(args, feature_dir, expr_name, resolution="1.0", clustering_method= "leiden"):
     dataset_dir = args.dataset_dir
     dataset = args.dataset
     expr_dir = os.path.join(dataset_dir, dataset)
-    fig_dir = os.path.join(args.figure_dir, dataset)
+    fig_dir = os.path.join(args.figure_dir, dataset, "%s_clustering_resolution_%s" % (clustering_method, resolution))
     mkdir(fig_dir)
+    fig_fp = os.path.join(fig_dir, "%s_cluster_on_img_%s.pdf" % (dataset, expr_name))
+    if os.path.exists(fig_fp):
+        print("%s exist: pass" % fig_fp)
+        return
     plt_setting()
     cm = plt.get_cmap('Set1')
     ncol = 4 if dataset in SPATIAL_LIBD_DATASETS else 3
@@ -245,49 +262,64 @@ def plot_cluster_on_img(args, feature_dir, expr_name, spatial_cords, dataset, sc
 
     spatials = [False, True]
     titles = ["VASC", "VASC + SP"]
-    labels_dir = os.path.join(feature_dir, "leiden_labels")
-    for sid, spatial in enumerate(spatials):
-        name = args.dataset if not spatial else "%s_with_spatial" % dataset
-        label_fp = os.path.join(labels_dir, "%s_%s_label.tsv" % (name, expr_name))
-        clusters = pd.read_csv(label_fp, header=None).values.astype(int)
+    labels_dir = os.path.join(feature_dir, "%s_labels_resolution_%s" % (clustering_method, resolution))
+    try:
+        for sid, spatial in enumerate(spatials):
+            args.spatial = spatial
+            args.expr_name = expr_name
+            name = get_expr_name(args)
+            label_fp = os.path.join(labels_dir, "%s_label.tsv" % name)
+            if os.path.exists(label_fp):
+                clusters = pd.read_csv(label_fp, header=None).values.astype(int)
 
-        offset = 2 if dataset in SPATIAL_LIBD_DATASETS else 1
-        ax = axs[sid + offset]
-        ax.axis('off')
-        ax.imshow(img)
-        unique_clusters = np.unique(clusters)
-        for cid, cluster in enumerate(unique_clusters[:-1]):
-            color = cm(1. * cid / (len(unique_clusters) + 1))
-            ind = (clusters == cluster).flatten()
-            ax.scatter(x[ind], y[ind], s=1, color=color, label= cluster)
-        if dataset in SPATIAL_LIBD_DATASETS:
-            info_df = pd.read_csv(os.path.join(expr_dir, "spot_info.csv"))
-            ground_truth_clusters = info_df["layer_guess_reordered"].values.astype(str)
-            clusters = pd.read_csv(label_fp, header=None).values.flatten().astype(str)
-            ari = metrics.adjusted_rand_score(ground_truth_clusters, clusters)
-            ax.set_title("%s\n ARI: %.2f" % (titles[sid], ari), fontsize=12, weight='bold')
-        else:
-            ax.set_title("%s" % titles[sid], fontsize=12, weight='bold')
-    for ax in axs:
-        if dataset in ["V1_Adult_Mouse_Brain_Coronal_Section_1"]:
-            ax.invert_xaxis()
-    fig_fp = os.path.join(fig_dir, "%s_cluster_on_img_%s.pdf" % (dataset, expr_name))
-    plt.savefig(fig_fp, dpi=300)
-    plt.close('all')
+                offset = 2 if dataset in SPATIAL_LIBD_DATASETS else 1
+                ax = axs[sid + offset]
+                ax.axis('off')
+                ax.imshow(img)
+                unique_clusters = np.unique(clusters)
+                for cid, cluster in enumerate(unique_clusters[:-1]):
+                    color = cm(1. * cid / (len(unique_clusters) + 1))
+                    ind = (clusters == cluster).flatten()
+                    ax.scatter(x[ind], y[ind], s=1, color=color, label= cluster)
+                if dataset in SPATIAL_LIBD_DATASETS:
+                    info_df = pd.read_csv(os.path.join(expr_dir, "spot_info.csv"))
+                    ground_truth_clusters = info_df["layer_guess_reordered"].values.astype(str)
+                    clusters = pd.read_csv(label_fp, header=None).values.flatten().astype(str)
+                    ari = metrics.adjusted_rand_score(ground_truth_clusters, clusters)
+                    ax.set_title("%s\n ARI: %.2f" % (titles[sid], ari), fontsize=12, weight='bold')
+                else:
+                    ax.set_title("%s" % titles[sid], fontsize=12, weight='bold')
+            else:
+                return
+        for ax in axs:
+            if dataset in ["V1_Adult_Mouse_Brain_Coronal_Section_1"]:
+                ax.invert_xaxis()
+        plt.savefig(fig_fp, dpi=300)
+        plt.close('all')
+    except IndexError as e:
+        print(e)
+    except ValueError as e:
+        print(e)
 
-def plot_pseudo_time_on_img(args,  feature_dir, expr_name, spatial_cords, dataset, n_neighbors=10, root_idx= 50):
+def plot_pseudo_time_on_img(args,  feature_dir, expr_name, n_neighbors=10, root_idx= 50, umap_selected_root=False):
     dataset_dir = args.dataset_dir
     dataset = args.dataset
     expr_dir = os.path.join(dataset_dir, dataset)
-    fig_dir = os.path.join(args.figure_dir, dataset)
+    fig_dir = os.path.join(args.figure_dir, dataset, "pseudotime")
     mkdir(fig_dir)
+    root_suffix = "_umap_based_root" if umap_selected_root else "root_%d" % root_idx
+    fig_fp = os.path.join(fig_dir, "%s_pseudotime_on_img_%s_%s.pdf" % (dataset, expr_name, root_suffix))
+    if os.path.exists(fig_fp):
+        print("%s exist: pass" % fig_fp)
+        return
     plt_setting()
     cm = plt.get_cmap('Set1')
-
-    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+    ncol = 3 if dataset != "drosophila" else 2
+    fig, axs = plt.subplots(1, ncol, figsize=(ncol * 4, 4))
     plt.subplots_adjust(wspace=0.4, hspace=0.5, bottom=0.2)
     ax = axs[0]
-    ax.axis('off')
+    if dataset != "drosophila":
+        ax.axis('off')
 
     if dataset in VISIUM_DATASETS:
         scale_factor_fp = os.path.join(expr_dir, "spatial", "scalefactors_json.json")
@@ -299,6 +331,11 @@ def plot_pseudo_time_on_img(args,  feature_dir, expr_name, spatial_cords, datase
         x, y = spatial_cords[:, 0], spatial_cords[:, 1]
         img = plt.imread(os.path.join(expr_dir, "spatial", "tissue_lowres_image.png"))
         ax.imshow(img)
+    elif dataset == "drosophila":
+        coord_fp = os.path.join(expr_dir, "spatial_pred.h5ad")
+        spatial_adata = sc.read_h5ad(coord_fp)
+        spatial_cords = spatial_adata.obsm['spatial']
+        x, y = spatial_cords[:, 0], spatial_cords[:, 2]
     else:
         scale = 0.045
         coord_fp = os.path.join(expr_dir, "spatial_coords.csv")
@@ -321,47 +358,106 @@ def plot_pseudo_time_on_img(args,  feature_dir, expr_name, spatial_cords, datase
 
     spatials = [False, True]
     titles = ["VASC", "VASC + SP"]
+
     for sid, spatial in enumerate(spatials):
+        args.spatial = spatial
+        args.expr_name = expr_name
         name = get_expr_name(args)
-        # Neighbor Graph
-        feature_here_dir = feature_dir
         feature_fp = os.path.join(feature_dir, "%s.tsv" % name)
-        adata = sc.read_csv(feature_fp, delimiter="\t", first_column_names=None)
-        sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep='X')
-        sc.tl.umap(adata)
-        adata.uns['iroot'] = root_idx
-        sc.tl.dpt(adata)
+        if os.path.exists(feature_fp):
+            adata = sc.read_csv(feature_fp, delimiter="\t", first_column_names=None)
+            sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep='X')
+            sc.tl.umap(adata)
+            if umap_selected_root:
+                xs, ys = adata.obsm["X_umap"][:, 0], adata.obsm["X_umap"][:, 1]
+                distances = np.sqrt(np.power((xs - xs.min()), 2) + np.power((ys - ys.min()), 2))
+                root = np.argmin(distances)
+            else:
+                root = root_idx
+            adata.uns['iroot'] = root
+            sc.tl.dpt(adata)
+            offset = 1 if dataset != "drosophila" else 0
+            ax = axs[sid + offset]
+            if dataset != "drosophila":
+                ax.imshow(img)
+                ax.axis('off')
+            else:
+                ax.set_aspect('equal', 'box')
+                ax.set_xlim([-200, 200])
+                ax.set_ylim([-100, 100])
+            ax.grid(False)
+            try:
+                st = ax.scatter(x, y, s=1, c=adata.obs['dpt_pseudotime'])
+                divider = make_axes_locatable(ax)
+                cax = divider.append_axes("right", size="5%", pad=0.05)
+                clb = fig.colorbar(st, cax=cax)
+                clb.ax.set_ylabel("pseudotime", labelpad=10, rotation=270, fontsize=8, weight='bold')
+                ax.set_title("%s" % titles[sid], fontsize=12, weight='bold')
+            except ValueError as e:
+                print(e)
+        else:
+            return
 
-        ax = axs[sid + 1]
-        ax.axis('off')
-        ax.imshow(img)
-        ax.grid(False)
-
-        st = ax.scatter(x, y, s=1, c=adata.obs['dpt_pseudotime'])
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes("right", size="5%", pad=0.05)
-        clb = fig.colorbar(st, cax=cax)
-        clb.ax.set_ylabel("pseudotime", labelpad=10, rotation=270, fontsize=8, weight='bold')
-        ax.set_title("%s" % titles[sid], fontsize=12, weight='bold')
-
-    for ax in axs:
-        if dataset in ["V1_Adult_Mouse_Brain_Coronal_Section_1"]:
-            ax.invert_xaxis()
-    fig_fp = os.path.join(fig_dir, "%s_pseudotime_on_img_%s.pdf" % (dataset, expr_name))
+    # for ax in axs:
+    #     #if dataset in ["V1_Adult_Mouse_Brain_Coronal_Section_1"]:
+    #     ax.invert_xaxis()
     plt.savefig(fig_fp, dpi=300)
     plt.close('all')
 
 if __name__ == "__main__":
     mpl.use('macosx')
     args = get_args()
-    datasets = SPATIAL_LIBD_DATASETS + VISIUM_DATASETS #
-    expr_name = args.expr_name
+    datasets = ["drosophila"]#SPATIAL_LIBD_DATASETS + VISIUM_DATASETS
+    expr_names = ["5_penalty1", "50_penalty1", "500_penalty1", "5_penalty1_2_panelty2", "50_penalty1_20_panelty2",
+                  "500_penalty1_200_panelty2"]
+    # expr_names = ["-100_penalty2", "-500_penalty2", "-1000_penalty2", "200_penalty1", "500_penalty1", "1000_penalty1", "500_penalty1_100_penalty2", "500_penalty1_-100_penalty2", "500_penalty1_-50_penalty2", "500_penalty1_200_penalty2"]
+    # expr_names = ["L2_wt_KLD"]#["5_penalty1", "50_penalty1", "500_penalty1",  "5_penalty1_2_panelty2", "50_penalty1_20_panelty2", "500_penalty1_200_panelty2",]#["500_penalty1_200_penalty2", "500_penalty1_-200_penalty2" , "500_penalty1_100_penalty3", "500_penalty1_-100_penalty3", "500_penalty1_200_penalty2_-100_penalty3", "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.35_ftf_0.6", "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.6", "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.6_ftc_0.25_-100p33"]#["500_penalty1"]##["500_penalty1_-100_penalty3", "500_penalty1_100_penalty3"]#["-100p11", "-100p22", "-100p33"]#["500_penalty1_-50_penalty2", "500_penalty1_-100_penalty2", "500_penalty1_100_penalty2"]
+    # expr_names = ["-100_penalty1", "-100_penalty2", "-100_penalty3", "-500_penalty1", "-500_penalty2", "-500_penalty3",
+    #               "-1000_penalty1", "-1000_penalty2", "-1000_penalty3", "100_penalty1",
+    #               "500_penalty1_200_penalty2_-100_penalty3", "500_penalty1_200_penalty2_-250_penalty3",
+    #               "500_penalty1_200_penalty2_100_penalty3", "500_penalty1_200_penalty2_250_penalty3",
+    #               "500_penalty1_200_penalty2", "500_penalty1", "500_penalty2", "500_penalty3", "1000_penalty1",
+    #               "500_penalty1_200_penalty2_-250_penalty3_20p11_50p22_spc_0.25_ftf_0.6_ftc_0.25",
+    #               "500_penalty1_200_penalty2_-250_penalty3_-20p11_50p22_spc_0.25_ftf_0.6_ftc_0.25",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.6_ftc_0.25_-200p33",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.6_ftc_0.25_-50p33",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.6_ftc_0.25_-100p33",
+    #               "500_penalty1_200_penalty2_-250_penalty3_-50p33", "500_penalty1_200_penalty2_-250_penalty3_50p33",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.35_ftf_0.5",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.5",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.35_ftf_0.6",
+    #               "500_penalty1_200_penalty2_-250_penalty3_1000p33", "500_penalty1_200_penalty2_-250_penalty3_500p33",
+    #               "500_penalty1_200_penalty2_-250_penalty3_200p11",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.7",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.6",
+    #               "500_penalty1_200_penalty2_-250_penalty3_-500p33_spc_0.2_ftc_0.35",
+    #               "500_penalty1_200_penalty2_-250_penalty3_-100p33", "500_penalty1_200_penalty2_-250_penalty3_-1000p33",
+    #               "500_penalty1_200_penalty2_-250_penalty3_-5000p33", "500_penalty1_200_penalty2_-250_penalty3_20p22",
+    #               "500_penalty1_200_penalty2_-250_penalty3_100p22", "500_penalty1_200_penalty2_-250_penalty3_200p22",
+    #               "500_penalty1_200_penalty2_-250_penalty3_-500p33", "500_penalty1_200_penalty2_-250_penalty3_100p11",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p22",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p11_10p22_-500p33",
+    #               "500_penalty1_200_penalty2_-250_penalty3_50p11_20p22_-1000p33",
+    #               "500_penalty1_200_penalty2_-250_penalty3_100p11_20p22_-1000p33",
+    #               "500_penalty1_200_penalty2_-1000_penalty3", "500_penalty1_200_penalty2_-600_penalty3",
+    #               "500_penalty1_200_penalty2_50_penalty3", "500_penalty1_100_penalty2_50_penalty3",
+    #               "500_penalty1_100_penalty2_-50_penalty3", "500_penalty1_-100_penalty2_-50_penalty3",
+    #               "500_penalty1_-100_penalty2_-100_penalty3", "500_penalty1_100_penalty2_-100_penalty3",
+    #               "500_penalty1_-50_penalty2_-250_penalty3", "500_penalty1_-100_penalty2_-250_penalty3",
+    #               "500_penalty1_-100_penalty2_-500_penalty3"]
+    resolutions = ["1.0", "0.8"]
+    clustering_methods = ["leiden"]  # , "louvain"
+    UMAP_based_selections = [True]#, False
     for dataset in datasets:
         args.dataset = dataset
-        coords = []#get_spatial_coords(args)
-        feature_dir = os.path.join(args.dataset_dir, "features")
-        #plot_spatial_cord_with_pseudo_time(args.figure_dir, feature_dir, coords, args.dataset)
-        #plot_spatial_vs_feature_dist_colored_pseudo_time(args.figure_dir, feature_dir, coords, args.dataset)
-        plot_umap_clustering(args.figure_dir, feature_dir, expr_name, coords, args.dataset)
-        plot_cluster_on_img(args, feature_dir, expr_name, coords, args.dataset)
-        plot_pseudo_time_on_img(args, feature_dir, expr_name, coords, args.dataset)
+        for expr_name in expr_names:
+            for umap_based_selection in UMAP_based_selections:
+                coords = []#get_spatial_coords(args)
+                feature_dir = os.path.join(args.dataset_dir, "features")
+                # plot_spatial_cord_with_pseudo_time(args.figure_dir, feature_dir, expr_name, coords, args.dataset)
+                # plot_spatial_vs_feature_dist_colored_pseudo_time(args.figure_dir, feature_dir, expr_name, coords, args.dataset)
+                # plot_umap_clustering(args.figure_dir, feature_dir, expr_name,  args.dataset)
+                plot_pseudo_time_on_img(args, feature_dir, expr_name, umap_selected_root=umap_based_selection)
+                # for resolution in resolutions:
+                #     for method in clustering_methods:
+                #         plot_cluster_on_img(args, feature_dir, expr_name, resolution=resolution, clustering_method=method)

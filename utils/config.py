@@ -5,9 +5,11 @@ parser = argparse.ArgumentParser()
 
 # params to change
 parser.add_argument('--gpu', type=int, default=4)
-parser.add_argument('--expr_name', type=str, default='default')
+parser.add_argument('--expr_name', type=str, default='500_penalty1_-50_penalty2') #'500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.6'
 parser.add_argument('--spatial', type=bool, default=True)
-parser.add_argument('--batch_size', type=int, default=256)
+parser.add_argument('--sigma_sq', type=float, default=0.1)
+parser.add_argument('--batch', type=bool, default=True)
+parser.add_argument('--batch_size', type=int, default=512)
 parser.add_argument('--patience', type=int, default=30)
 parser.add_argument('--min_stop', type=int, default=50)
 parser.add_argument('--z_dim', type=int, default=50)
@@ -21,8 +23,8 @@ parser.add_argument('--arch', type=str, default='vasc', choices=['vasc'])
 parser.add_argument('--dataset_dir', type=str, default='data')
 parser.add_argument('--feature_dir', type=str, default='features')
 parser.add_argument('--figure_dir', type=str, default='figures')
-parser.add_argument('--dataset', type=str, default='V1_Adult_Mouse_Brain',
-                    choices=['V1_Adult_Mouse_Brain'])
+parser.add_argument('--dataset', type=str, default='drosophila',
+                    choices=['drosophila'])
 
 parser.add_argument('--test_batch_size', type=int, default=64)
 parser.add_argument('--epochs', type=int, default=10000)

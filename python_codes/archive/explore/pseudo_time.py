@@ -57,8 +57,8 @@ def get_pseudo_time(data_fp, dataset, root_idx= 300, VASC=True):
     ax.set_title(dataset)
     fig_fp = os.path.join(fig_dir, "%s_paga_vasc.pdf" % dataset)
     plt.savefig(fig_fp, dpi=300)
-    fa = sc.tl.draw_graph(adata, init_pos='paga')
 
+    fa = sc.tl.draw_graph(adata, init_pos='paga')
     adata.uns['iroot'] = root_idx
     sc.tl.dpt(adata)
 

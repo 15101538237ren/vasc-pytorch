@@ -8,6 +8,8 @@ import scanpy as sc
 import squidpy as sq
 from scipy.spatial import distance
 from somde import SomNode
+from sklearn.neighbors import kneighbors_graph
+from models.alpha import graph_alpha
 
 SPATIAL_N_FEATURE_MAX = 1.0
 SPATIAL_THRESHOLD = 0.5
@@ -34,9 +36,24 @@ VISIUM_DATASETS = [
 
 SQUIDPY_DATASETS = ["seqfish", "imc"]
 SPATIAL_LIBD_DATASETS = ["Spatial_LIBD_%s" % item for item in ["151508", "151509", "151510", "151669", "151670", "151671", "151673", "151674", "151675"]]#, "151672", "151676", "151507"]]#["151507"]]#
+
 def mkdir(dir_path):
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
+
+def estimate_cutoff_knn(pts, k=10):
+    A_knn = kneighbors_graph(pts, n_neighbors=k, mode='distance')
+    est_cut = A_knn.sum() / float(A_knn.count_nonzero())
+    return est_cut
+
+def corruption(x, edge_index):
+    return x[torch.randperm(x.size(0))], edge_index
+
+def sparse_mx_to_torch_edge_list(sparse_mx):
+    sparse_mx = sparse_mx.tocoo().astype(np.float32)
+    edge_list = torch.from_numpy(
+        np.vstack((sparse_mx.row, sparse_mx.col)).astype(np.int64))
+    return edge_list
 
 def get_spatial_coords(args):
     dataset_dir = args.dataset_dir
@@ -89,6 +106,7 @@ def get_squidpy_data(dataset):
 def get_data(args):
     dataset_dir = args.dataset_dir
     dataset = args.dataset
+    graph_A = None
     if dataset in ["Kidney", "Liver"]:
         expr_fp = os.path.join(dataset_dir, dataset, "%s.count.csv" % dataset)
         expr_df = pd.read_csv(expr_fp, header=False, index_col=0)
@@ -97,6 +115,8 @@ def get_data(args):
 
         coord_fp = os.path.join(dataset_dir, dataset, "%s.idx" % dataset)
         coords = pd.read_csv(coord_fp, header=0, index_col=0).values[:, 1:]
+        cut = estimate_cutoff_knn(coords, k=args.knn_n_neighbors)
+        graph_A = graph_alpha(coords, cut=cut, n_layer=args.alpha_n_layer, draw=False)
         spatial_dists = distance.cdist(coords, coords, 'euclidean')
         spatial_dists = (spatial_dists/np.max(spatial_dists)) * SPATIAL_N_FEATURE_MAX
         expr[expr < 0] = 0.0
@@ -105,14 +125,14 @@ def get_data(args):
         if args.scale:
             for i in range(expr.shape[0]):
                 expr[i, :] = expr[i, :] / np.max(expr[i, :])
-        return expr, genes, cells, spatial_dists
+        return expr, genes, cells, spatial_dists, graph_A
     elif dataset == "drosophila":
         expr_fp = os.path.join(dataset_dir, dataset, "%s.txt" % dataset)
         expr_df = pd.read_csv(expr_fp, sep="\t", header=0, index_col=0)
         expr = expr_df.values
         cells, genes = expr_df.index.tolist(), list(expr_df.columns.values)
         spatial_dists = torch.from_numpy(np.load(os.path.join(dataset_dir, dataset, "spatial_dist.npy")))
-        return expr, genes, cells, spatial_dists
+        return expr, genes, cells, spatial_dists, graph_A
     elif dataset in SQUIDPY_DATASETS:
         adata = get_squidpy_data(dataset)
     elif dataset in SPATIAL_LIBD_DATASETS:
@@ -152,9 +172,12 @@ def get_data(args):
         for i in range(expr.shape[0]):
             expr[i, :] = expr[i, :] / np.max(expr[i, :])
     coords = adata.obsm['spatial']
+    if args.arch != "VASC":
+        cut = estimate_cutoff_knn(coords, k=args.knn_n_neighbors)
+        graph_A = graph_alpha(coords, cut=cut, n_layer=args.alpha_n_layer, draw=False)
     spatial_dists = distance.cdist(coords, coords, 'euclidean')
     spatial_dists = (spatial_dists / np.max(spatial_dists)) * SPATIAL_N_FEATURE_MAX
-    return expr, genes, cells, spatial_dists
+    return expr, genes, cells, spatial_dists, graph_A
 
 def loss_function(recon_x, x, mu, log_var, spatial_distances, args):
     n, in_dim = x.shape
@@ -211,7 +234,7 @@ def loss_function(recon_x, x, mu, log_var, spatial_distances, args):
         # dist_penalty_33 = torch.div(torch.nansum(dist_3[both_closed_mask]), torch.nansum(both_closed_mask))
         # dist_penalty_33 = 0.0 if torch.isnan(dist_penalty_33) else dist_penalty_33
 
-        dist_penalty = torch.mul(dist_penalty_1, 500) + torch.mul(dist_penalty_2, -100)# + + torch.mul(dist_penalty_3, -250) + dist_penalty_22*50 #+ dist_penalty_11*20# + dist_penalty_22 * 10 + dist_penalty_33*-500
+        dist_penalty = torch.mul(dist_penalty_1, 500)# + torch.mul(dist_penalty_2, -100)# + + torch.mul(dist_penalty_3, -250) + dist_penalty_22*50 #+ dist_penalty_11*20# + dist_penalty_22 * 10 + dist_penalty_33*-500
         #print("1: %.2f, 2: %.2f, 3: %.2f, 4: %.2f, 5: %.2f, 6: %.2f " % (dist_penalty_1*500, dist_penalty_2*200, dist_penalty_3*-250, dist_penalty_11 * 50, dist_penalty_22 * 20, dist_penalty_33*-1000))
         #print("BCE Loss:%.2f, KLD: %.2f, kl_sf:%.2f" % (BCE, KLD, kl_sf))
         # print("BCE Loss:%.2f, kl_sf:%.2f" % (BCE, kl_sf))
@@ -219,26 +242,49 @@ def loss_function(recon_x, x, mu, log_var, spatial_distances, args):
     else:
         return VAE_Loss
 
-def train_in_batch(vasc, optimizer, train_loader, model_fp, spatial_dists, args):
-    vasc.train()
+def train_in_batch(model, device, train_loader, graph_A, model_fp, spatial_dists, args):
+
+    if args.arch == "VASC":
+        optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
+    elif args.arch == "DGI":
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
     epochs = args.epochs
     min_loss = np.inf
     patience = 0
+    model.train()
+    if args.arch != "VASC":
+        edge_list = sparse_mx_to_torch_edge_list(graph_A)
+        edge_list = edge_list.to(device)
     for epoch in range(epochs):
         train_loss = 0
-        if epoch % 150 == 0 and args.annealing:
+
+        if epoch % 150 == 0 and args.annealing and args.arch == "VASC":
             tau = max(args.tau0 * np.exp(-args.anneal_rate * epoch), args.min_tau)
             print("tau = %.2f" % tau)
         for batch_idx, data in enumerate(train_loader):
+            optimizer.zero_grad()
             data = data[0].cuda()
             sidx, eidx = args.batch_size * batch_idx, args.batch_size * (batch_idx + 1)
             s_dists = spatial_dists[sidx: eidx, sidx: eidx].cuda()
-            optimizer.zero_grad()
-            recon_batch, mu, log_var = vasc.forward(data, tau)
-            loss = loss_function(recon_batch, data, mu, log_var, s_dists, args)
+            if args.arch == "VASC":
+                recon, mu, log_var = model.forward(data, tau)
+                loss = loss_function(recon, data, mu, log_var, s_dists, args)
+            elif args.arch == "DGI":
+                pos_z, neg_z, summary = model(data, edge_list)
+                loss = model.loss(pos_z, neg_z, summary)
+            else:
+                z = model.encode(data, edge_list)
+                loss = model.recon_loss(z, edge_list)
+                if args.arch == 'VGAE':
+                    loss = loss + (1 / data.shape[0]) * model.kl_loss()
+
             loss.backward()
             train_loss += loss.item()
             optimizer.step()
+
         min_loss = min(train_loss, min_loss)
         if train_loss > min_loss:
             patience += 1
@@ -248,28 +294,54 @@ def train_in_batch(vasc, optimizer, train_loader, model_fp, spatial_dists, args)
             print("Epoch %d/%d" % (epoch + 1, epochs))
             print("Loss:" + str(train_loss))
             if patience == 0:
-                torch.save(vasc.state_dict(), model_fp)
+                torch.save(model.state_dict(), model_fp)
                 print("Saved model at epoch %d with min_loss: %.0f" % (epoch + 1, min_loss))
         if patience > args.patience and epoch > args.min_stop:
             break
 
-def train(vasc, optimizer, expression_tensor, model_fp, spatial_dists, args):
-    vasc.train()
+def train(model, device, X, graph_A, model_fp, spatial_dists, args):
+
+    if args.arch == "VASC":
+        optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
+    elif args.arch == "DGI":
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
     epochs = args.epochs
     min_loss = np.inf
     patience = 0
+    model.train()
+    data = X.to(device)
+
+    if args.arch != "VASC":
+        edge_list = sparse_mx_to_torch_edge_list(graph_A)
+        edge_list = edge_list.to(device)
+
     for epoch in range(epochs):
         train_loss = 0
-        if epoch % 150 == 0 and args.annealing:
+
+        if epoch % 150 == 0 and args.annealing and args.arch == "VASC":
             tau = max(args.tau0 * np.exp(-args.anneal_rate * epoch), args.min_tau)
             print("tau = %.2f" % tau)
-        data = expression_tensor.cuda()
         optimizer.zero_grad()
-        recon, mu, log_var = vasc.forward(data, tau)
-        loss = loss_function(recon, data, mu, log_var, spatial_dists, args)
+
+        if args.arch == "VASC":
+            recon, mu, log_var = model.forward(data, tau)
+            loss = loss_function(recon, data, mu, log_var, spatial_dists, args)
+        elif args.arch == "DGI":
+            pos_z, neg_z, summary = model(data, edge_list)
+            loss = model.loss(pos_z, neg_z, summary)
+        else:
+            z = model.encode(data, edge_list)
+            loss = model.recon_loss(z, edge_list)
+            if args.arch == 'VGAE':
+                loss = loss + (1 / data.shape[0]) * model.kl_loss()
+
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
+
         min_loss = min(train_loss, min_loss)
         if train_loss > min_loss:
             patience += 1
@@ -279,32 +351,39 @@ def train(vasc, optimizer, expression_tensor, model_fp, spatial_dists, args):
             print("Epoch %d/%d" % (epoch + 1, epochs))
             print("Loss:" + str(train_loss))
             if patience == 0:
-                torch.save(vasc.state_dict(), model_fp)
+                torch.save(model.state_dict(), model_fp)
                 print("Saved model at epoch %d with min_loss: %.0f" % (epoch + 1, min_loss))
         if patience > args.patience and epoch > args.min_stop:
             break
 
-def evaluate(vasc, expr, model_fp, args):
+def evaluate(model, device, X, graph_A, model_fp, args):
+    print(model_fp)
     activation = {}
     def get_activation(name):
         def hook(model, input, output):
             activation[name] = output.detach()
         return hook
-
-    vasc.z_mean.register_forward_hook(get_activation('z_mean'))
-    vasc.load_state_dict(torch.load(model_fp))
+    model.load_state_dict(torch.load(model_fp))
     print("Load state dict successful!")
-    vasc.eval()
-    expr = expr.cuda()
-    _ = vasc(expr, args.min_tau)
-    reduced_reprs = activation['z_mean'].detach().cpu().numpy()
-    return reduced_reprs
+    model.eval()
+    X = X.cuda()
+
+    if args.arch == "VASC":
+        model.z_mean.register_forward_hook(get_activation('z_mean'))
+        _ = model(X, args.min_tau)
+        reduced_reprs = activation['z_mean'].detach().cpu().numpy()
+        return reduced_reprs
+    else:
+        edge_list = sparse_mx_to_torch_edge_list(graph_A)
+        edge_list = edge_list.to(device)
+        z, _, _ = model(X, edge_list)
+        return z.cpu().detach().numpy()
 
 def get_expr_name(args):
     if args.spatial:
-        name = "%s_%s_with_spatial" % (args.dataset, args.expr_name)
+        name = "%s_%s_%s_with_spatial" % (args.dataset, args.arch, args.expr_name)
     else:
-        name = "%s" % args.dataset
+        name = "%s_%s" % (args.dataset, args.arch)
     return name
 
 def save_features(reduced_reprs, feature_dir, name):

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import random
 import numpy as np
 import pandas as pd
 import torch
@@ -35,7 +36,7 @@ VISIUM_DATASETS = [
 #         "Parent_Visium_Human_ColorectalCancer", "V1_Mouse_Kidney",
 
 SQUIDPY_DATASETS = ["seqfish", "imc"]
-SPATIAL_LIBD_DATASETS = ["Spatial_LIBD_%s" % item for item in ["151508", "151509", "151510", "151669", "151670", "151671", "151673", "151674", "151675"]]#, "151672", "151676", "151507"]]#["151507"]]#
+SPATIAL_LIBD_DATASETS = ["Spatial_LIBD_%s" % item for item in ["151671", "151673"]]#"151507", "151671", "151673"]]#, "151509", "151510", "151669", "151670", "151671", "151673", "151674", "151675"]]#, "151672", "151676", "151507"]]#["151507"]]#
 
 def mkdir(dir_path):
     if not os.path.exists(dir_path):
@@ -242,10 +243,22 @@ def loss_function(recon_x, x, mu, log_var, spatial_distances, args):
     else:
         return VAE_Loss
 
-def train_in_batch(model, device, train_loader, graph_A, model_fp, spatial_dists, args):
-
+def train_in_batch(model, device, train_loader, graph_A, spatial_dists, args,
+          torch_seed=None, python_seed=None, numpy_seed=None):
+    activation = {}
+    def get_activation(name):
+        def hook(model, input, output):
+            activation[name] = output.detach()
+        return hook
+    if not torch_seed is None:
+        torch.manual_seed(torch_seed)
+    if not python_seed is None:
+        random.seed(python_seed)
+    if not numpy_seed is None:
+        np.random.seed(numpy_seed)
     if args.arch == "VASC":
         optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
+        model.z_mean.register_forward_hook(get_activation('z_mean'))
     elif args.arch == "DGI":
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     else:
@@ -254,17 +267,16 @@ def train_in_batch(model, device, train_loader, graph_A, model_fp, spatial_dists
     epochs = args.epochs
     min_loss = np.inf
     patience = 0
-    model.train()
     if args.arch != "VASC":
         edge_list = sparse_mx_to_torch_edge_list(graph_A)
         edge_list = edge_list.to(device)
     for epoch in range(epochs):
         train_loss = 0
-
         if epoch % 150 == 0 and args.annealing and args.arch == "VASC":
             tau = max(args.tau0 * np.exp(-args.anneal_rate * epoch), args.min_tau)
             print("tau = %.2f" % tau)
         for batch_idx, data in enumerate(train_loader):
+            model.train()
             optimizer.zero_grad()
             data = data[0].cuda()
             sidx, eidx = args.batch_size * batch_idx, args.batch_size * (batch_idx + 1)
@@ -293,25 +305,47 @@ def train_in_batch(model, device, train_loader, graph_A, model_fp, spatial_dists
         if epoch % 10 == 1:
             print("Epoch %d/%d" % (epoch + 1, epochs))
             print("Loss:" + str(train_loss))
-            if patience == 0:
-                torch.save(model.state_dict(), model_fp)
-                print("Saved model at epoch %d with min_loss: %.0f" % (epoch + 1, min_loss))
+            # if patience == 0:
+            #     torch.save(model.state_dict(), model_fp)
+            #     print("Saved model at epoch %d with min_loss: %.0f" % (epoch + 1, min_loss))
         if patience > args.patience and epoch > args.min_stop:
             break
 
-def train(model, device, X, graph_A, model_fp, spatial_dists, args):
+    if args.arch == "VASC":
+        model(data, args.min_tau)
+        reduced_reprs = activation['z_mean'].detach().cpu().numpy()
+        return reduced_reprs
+    else:
+        edge_list = sparse_mx_to_torch_edge_list(graph_A)
+        edge_list = edge_list.to(device)
+        z = model.encode(data, edge_list)
+        return z.cpu().detach().numpy()
+
+def train(model, device, X, graph_A, spatial_dists, args,
+          torch_seed=None, python_seed=None, numpy_seed=None):
+    activation = {}
+    def get_activation(name):
+        def hook(model, input, output):
+            activation[name] = output.detach()
+        return hook
+    if not torch_seed is None:
+        torch.manual_seed(torch_seed)
+    if not python_seed is None:
+        random.seed(python_seed)
+    if not numpy_seed is None:
+        np.random.seed(numpy_seed)
 
     if args.arch == "VASC":
         optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr)
+        model.z_mean.register_forward_hook(get_activation('z_mean'))
     elif args.arch == "DGI":
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     else:
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
     epochs = args.epochs
     min_loss = np.inf
     patience = 0
-    model.train()
     data = X.to(device)
 
     if args.arch != "VASC":
@@ -319,8 +353,8 @@ def train(model, device, X, graph_A, model_fp, spatial_dists, args):
         edge_list = edge_list.to(device)
 
     for epoch in range(epochs):
+        model.train()
         train_loss = 0
-
         if epoch % 150 == 0 and args.annealing and args.arch == "VASC":
             tau = max(args.tau0 * np.exp(-args.anneal_rate * epoch), args.min_tau)
             print("tau = %.2f" % tau)
@@ -339,32 +373,44 @@ def train(model, device, X, graph_A, model_fp, spatial_dists, args):
                 loss = loss + (1 / data.shape[0]) * model.kl_loss()
 
         loss.backward()
-        train_loss += loss.item()
         optimizer.step()
+        train_loss += loss.item()
 
-        min_loss = min(train_loss, min_loss)
         if train_loss > min_loss:
             patience += 1
         else:
             patience = 0
+            min_loss = train_loss
         if epoch % 10 == 1:
             print("Epoch %d/%d" % (epoch + 1, epochs))
             print("Loss:" + str(train_loss))
-            if patience == 0:
-                torch.save(model.state_dict(), model_fp)
-                print("Saved model at epoch %d with min_loss: %.0f" % (epoch + 1, min_loss))
+            # if patience == 0:
+            #     torch.save(model.state_dict(), model_fp)
+            #     print("Saved model at epoch %d with min_loss: %.0f" % (epoch + 1, min_loss))
         if patience > args.patience and epoch > args.min_stop:
             break
 
+    if args.arch == "VASC":
+        model(data, args.min_tau)
+        reduced_reprs = activation['z_mean'].detach().cpu().numpy()
+        return reduced_reprs
+    else:
+        edge_list = sparse_mx_to_torch_edge_list(graph_A)
+        edge_list = edge_list.to(device)
+        if args.arch == "DGI":
+            z, _, _ = model(data, edge_list)
+        else:
+            z = model.encode(data, edge_list)
+        return z.cpu().detach().numpy()
+
 def evaluate(model, device, X, graph_A, model_fp, args):
-    print(model_fp)
     activation = {}
     def get_activation(name):
         def hook(model, input, output):
             activation[name] = output.detach()
         return hook
     model.load_state_dict(torch.load(model_fp))
-    print("Load state dict successful!")
+    print("Load state dict from %s successful!" % model_fp)
     model.eval()
     X = X.cuda()
 
@@ -376,18 +422,21 @@ def evaluate(model, device, X, graph_A, model_fp, args):
     else:
         edge_list = sparse_mx_to_torch_edge_list(graph_A)
         edge_list = edge_list.to(device)
-        z, _, _ = model(X, edge_list)
+        z = model.encode(X, edge_list)
         return z.cpu().detach().numpy()
 
-def get_expr_name(args):
+def get_expr_name(args, idx = 0):
+    idx_suf = "" if idx == 0 else "_%d" % idx
+    method_name = "_%s" % args.arch if args.arch != "VASC" else ""
     if args.spatial:
-        name = "%s_%s_%s_with_spatial" % (args.dataset, args.arch, args.expr_name)
+        name = "%s%s_%s_with_spatial%s" % (args.dataset, method_name, args.expr_name, idx_suf)
     else:
-        name = "%s_%s" % (args.dataset, args.arch)
+        name = "%s%s%s" % (args.dataset, method_name,idx_suf)
     return name
 
-def save_features(reduced_reprs, feature_dir, name):
-    feature_fp = os.path.join(feature_dir, "%s.tsv" % name)
+def save_features(reduced_reprs, feature_dir, name, mds=False):
+    suff = "_MDS_Consensus" if mds else ""
+    feature_fp = os.path.join(feature_dir, "%s%s.tsv" % (name, suff))
     mkdir(feature_dir)
     np.savetxt(feature_fp, reduced_reprs[:, :], delimiter="\t")
     print("Features saved successful! %s" % feature_fp)
@@ -395,7 +444,6 @@ def save_features(reduced_reprs, feature_dir, name):
 def prepare_cuda(args):
     cuda = torch.cuda.is_available()
     device = torch.device("cuda:%d" % args.gpu if cuda else "cpu")
-
     if cuda:
         torch.cuda.manual_seed_all(args.seed)
         print("GPU count: %d, using gpu: %d" % (torch.cuda.device_count(), args.gpu))

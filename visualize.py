@@ -167,25 +167,28 @@ def plot_spatial_vs_feature_dist_colored_pseudo_time(figure_dir, feature_dir, ex
     fig_fp = os.path.join(fig_dir, "%s_dist_scatter.pdf" % dataset)
     plt.savefig(fig_fp, dpi=300)
 
-def plot_umap_clustering(figure_dir, feature_dir, expr_name, dataset, n_neighbors=10):
+def plot_umap_clustering(figure_dir, feature_dir, expr_name, dataset, n_neighbors=10, deep_method="VASC"):
     fig_dir = os.path.join(figure_dir, dataset, "umap")
     mkdir(fig_dir)
-    fig_fp = os.path.join(fig_dir, "%s_%s.pdf" % (dataset, expr_name))
+    method_name = "_%s" % args.arch if args.arch != "VASC" else ""
+    fig_fp = os.path.join(fig_dir, "%s_%s%s.pdf" % (dataset, expr_name, method_name))
 
     if os.path.exists(fig_fp):
         print("%s exist: pass" % fig_fp)
         return
     plt_setting()
-    fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+    ncol = 2 if deep_method =="VASC" else 1
+    fig, axs = plt.subplots(1, ncol, figsize=(4 * ncol, 4))
     plt.subplots_adjust(wspace=0.4, hspace=0.5, bottom=0.2)
-    spatials = [False, True]
+    spatials = [False, True] if deep_method =="VASC" else [False]
 
-    titles = ["VASC", "VASC + SP"]
+    titles = ["VASC", "VASC + SP"] if deep_method =="VASC" else [deep_method]
     for sid, spatial in enumerate(spatials):
-        ax = axs[sid]
+        ax = axs[sid] if ncol > 1 else axs
         title = titles[sid]
         args.spatial = spatial
         args.expr_name = expr_name
+        args.arch = deep_method
         name = get_expr_name(args)
         feature_fp = os.path.join(feature_dir, "%s.tsv" % name)
         adata = sc.read_csv(feature_fp, delimiter="\t", first_column_names=None)
@@ -206,19 +209,22 @@ def plot_umap_clustering(figure_dir, feature_dir, expr_name, dataset, n_neighbor
     plt.savefig(fig_fp, dpi=300)
     plt.close('all')
 
-def plot_cluster_on_img(args, feature_dir, expr_name, resolution="1.0", clustering_method= "leiden"):
+def plot_cluster_on_img(args, feature_dir, expr_name, resolution="1.0", clustering_method= "leiden", deep_method="VASC"):
     dataset_dir = args.dataset_dir
     dataset = args.dataset
     expr_dir = os.path.join(dataset_dir, dataset)
+    method_name = "_%s" % args.arch if args.arch != "VASC" else ""
     fig_dir = os.path.join(args.figure_dir, dataset, "%s_clustering_resolution_%s" % (clustering_method, resolution))
     mkdir(fig_dir)
-    fig_fp = os.path.join(fig_dir, "%s_cluster_on_img_%s.pdf" % (dataset, expr_name))
-    if os.path.exists(fig_fp):
-        print("%s exist: pass" % fig_fp)
-        return
+    fig_fp = os.path.join(fig_dir, "%s_cluster_on_img_%s%s.pdf" % (dataset, expr_name, method_name))
+    # if os.path.exists(fig_fp):
+    #     print("%s exist: pass" % fig_fp)
+    #     return
     plt_setting()
     cm = plt.get_cmap('Set1')
     ncol = 4 if dataset in SPATIAL_LIBD_DATASETS else 3
+    if deep_method != "VASC":
+        ncol -= 1
     fig, axs = plt.subplots(1, ncol, figsize=(ncol * 4, 4))
     plt.subplots_adjust(wspace=0.4, hspace=0.5, bottom=0.2)
     ax = axs[0]
@@ -260,13 +266,14 @@ def plot_cluster_on_img(args, feature_dir, expr_name, resolution="1.0", clusteri
             ax.scatter(x[ind], y[ind], s=1, color=color, label= cluster)
         ax.set_title("Ground Truth", fontsize=12, weight='bold')
 
-    spatials = [False, True]
-    titles = ["VASC", "VASC + SP"]
+    spatials = [False, True]  if deep_method =="VASC" else [False]
+    titles = ["VASC", "VASC + SP"]  if deep_method =="VASC" else [deep_method]
     labels_dir = os.path.join(feature_dir, "%s_labels_resolution_%s" % (clustering_method, resolution))
     try:
         for sid, spatial in enumerate(spatials):
             args.spatial = spatial
             args.expr_name = expr_name
+            args.arch = deep_method
             name = get_expr_name(args)
             label_fp = os.path.join(labels_dir, "%s_label.tsv" % name)
             if os.path.exists(label_fp):
@@ -301,20 +308,21 @@ def plot_cluster_on_img(args, feature_dir, expr_name, resolution="1.0", clusteri
     except ValueError as e:
         print(e)
 
-def plot_pseudo_time_on_img(args,  feature_dir, expr_name, n_neighbors=10, root_idx= 50, umap_selected_root=False):
+def plot_pseudo_time_on_img(args,  feature_dir, expr_name, n_neighbors=10, root_idx= 50, umap_selected_root=False, deep_method="VASC"):
     dataset_dir = args.dataset_dir
     dataset = args.dataset
     expr_dir = os.path.join(dataset_dir, dataset)
     fig_dir = os.path.join(args.figure_dir, dataset, "pseudotime")
     mkdir(fig_dir)
     root_suffix = "_umap_based_root" if umap_selected_root else "root_%d" % root_idx
-    fig_fp = os.path.join(fig_dir, "%s_pseudotime_on_img_%s_%s.pdf" % (dataset, expr_name, root_suffix))
-    if os.path.exists(fig_fp):
-        print("%s exist: pass" % fig_fp)
-        return
+    method_name = "_%s" % deep_method if deep_method != "VASC" else ""
+    fig_fp = os.path.join(fig_dir, "%s_pseudotime_on_img_%s%s_%s.pdf" % (dataset, expr_name, method_name, root_suffix))
+    # if os.path.exists(fig_fp):
+    #     print("%s exist: pass" % fig_fp)
+    #     return
     plt_setting()
     cm = plt.get_cmap('Set1')
-    ncol = 3 if dataset != "drosophila" else 2
+    ncol = 3 if dataset != "drosophila" and deep_method == "VASC" else 2
     fig, axs = plt.subplots(1, ncol, figsize=(ncol * 4, 4))
     plt.subplots_adjust(wspace=0.4, hspace=0.5, bottom=0.2)
     ax = axs[0]
@@ -356,12 +364,13 @@ def plot_pseudo_time_on_img(args,  feature_dir, expr_name, n_neighbors=10, root_
             ax.scatter(x[ind], y[ind], s=1, color=color, label= cluster)
         ax.set_title("Ground Truth", fontsize=12, weight='bold')
 
-    spatials = [False, True]
-    titles = ["VASC", "VASC + SP"]
+    spatials = [False, True] if deep_method == "VASC" else [False]
+    titles = ["VASC", "VASC + SP"]  if deep_method =="VASC" else [deep_method]
 
     for sid, spatial in enumerate(spatials):
         args.spatial = spatial
         args.expr_name = expr_name
+        args.arch = deep_method
         name = get_expr_name(args)
         feature_fp = os.path.join(feature_dir, "%s.tsv" % name)
         if os.path.exists(feature_fp):
@@ -375,6 +384,7 @@ def plot_pseudo_time_on_img(args,  feature_dir, expr_name, n_neighbors=10, root_
             else:
                 root = root_idx
             adata.uns['iroot'] = root
+            sc.tl.diffmap(adata, n_comps=10)
             sc.tl.dpt(adata)
             offset = 1 if dataset != "drosophila" else 0
             ax = axs[sid + offset]
@@ -407,9 +417,10 @@ def plot_pseudo_time_on_img(args,  feature_dir, expr_name, n_neighbors=10, root_
 if __name__ == "__main__":
     mpl.use('macosx')
     args = get_args()
-    datasets = ["drosophila"]#SPATIAL_LIBD_DATASETS + VISIUM_DATASETS
-    expr_names = ["5_penalty1", "50_penalty1", "500_penalty1", "5_penalty1_2_panelty2", "50_penalty1_20_panelty2",
-                  "500_penalty1_200_panelty2"]
+    datasets = SPATIAL_LIBD_DATASETS #+ VISIUM_DATASETS #["drosophila"]#
+    expr_names = ["default"]
+    # ["5_penalty1", "50_penalty1", "500_penalty1", "5_penalty1_2_panelty2", "50_penalty1_20_panelty2",
+    #  "500_penalty1_200_panelty2"]
     # expr_names = ["-100_penalty2", "-500_penalty2", "-1000_penalty2", "200_penalty1", "500_penalty1", "1000_penalty1", "500_penalty1_100_penalty2", "500_penalty1_-100_penalty2", "500_penalty1_-50_penalty2", "500_penalty1_200_penalty2"]
     # expr_names = ["L2_wt_KLD"]#["5_penalty1", "50_penalty1", "500_penalty1",  "5_penalty1_2_panelty2", "50_penalty1_20_panelty2", "500_penalty1_200_panelty2",]#["500_penalty1_200_penalty2", "500_penalty1_-200_penalty2" , "500_penalty1_100_penalty3", "500_penalty1_-100_penalty3", "500_penalty1_200_penalty2_-100_penalty3", "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.35_ftf_0.6", "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.6", "500_penalty1_200_penalty2_-250_penalty3_50p22_spc_0.25_ftf_0.6_ftc_0.25_-100p33"]#["500_penalty1"]##["500_penalty1_-100_penalty3", "500_penalty1_100_penalty3"]#["-100p11", "-100p22", "-100p33"]#["500_penalty1_-50_penalty2", "500_penalty1_-100_penalty2", "500_penalty1_100_penalty2"]
     # expr_names = ["-100_penalty1", "-100_penalty2", "-100_penalty3", "-500_penalty1", "-500_penalty2", "-500_penalty3",
@@ -445,19 +456,22 @@ if __name__ == "__main__":
     #               "500_penalty1_-100_penalty2_-100_penalty3", "500_penalty1_100_penalty2_-100_penalty3",
     #               "500_penalty1_-50_penalty2_-250_penalty3", "500_penalty1_-100_penalty2_-250_penalty3",
     #               "500_penalty1_-100_penalty2_-500_penalty3"]
-    resolutions = ["1.0", "0.8"]
+    deep_methods = ['DGI']#, 'DGI', 'VGAE']
+    resolutions = ["0.7", "0.6", "0.5", "0.4"]#, "0.3", "0.2", "0.1"]
     clustering_methods = ["leiden"]  # , "louvain"
     UMAP_based_selections = [True]#, False
-    for dataset in datasets:
-        args.dataset = dataset
-        for expr_name in expr_names:
-            for umap_based_selection in UMAP_based_selections:
-                coords = []#get_spatial_coords(args)
-                feature_dir = os.path.join(args.dataset_dir, "features")
-                # plot_spatial_cord_with_pseudo_time(args.figure_dir, feature_dir, expr_name, coords, args.dataset)
-                # plot_spatial_vs_feature_dist_colored_pseudo_time(args.figure_dir, feature_dir, expr_name, coords, args.dataset)
-                # plot_umap_clustering(args.figure_dir, feature_dir, expr_name,  args.dataset)
-                plot_pseudo_time_on_img(args, feature_dir, expr_name, umap_selected_root=umap_based_selection)
-                # for resolution in resolutions:
-                #     for method in clustering_methods:
-                #         plot_cluster_on_img(args, feature_dir, expr_name, resolution=resolution, clustering_method=method)
+    n_neighbors = 50
+    for deep_method in deep_methods:
+        for dataset in datasets:
+            args.dataset = dataset
+            for expr_name in expr_names:
+                for umap_based_selection in UMAP_based_selections:
+                    coords = []#get_spatial_coords(args)
+                    feature_dir = os.path.join(args.dataset_dir, "features")
+                    # plot_spatial_cord_with_pseudo_time(args.figure_dir, feature_dir, expr_name, coords, args.dataset)
+                    # plot_spatial_vs_feature_dist_colored_pseudo_time(args.figure_dir, feature_dir, expr_name, coords, args.dataset)
+                    # plot_umap_clustering(args.figure_dir, feature_dir, expr_name,  args.dataset, deep_method=deep_method)
+                    #plot_pseudo_time_on_img(args, feature_dir, expr_name, umap_selected_root=umap_based_selection, deep_method=deep_method, n_neighbors=n_neighbors)
+                    for resolution in resolutions:
+                        for method in clustering_methods:
+                            plot_cluster_on_img(args, feature_dir, expr_name, resolution=resolution, clustering_method=method, deep_method=deep_method)

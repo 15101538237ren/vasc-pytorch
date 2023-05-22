@@ -473,7 +473,7 @@ def plot_param_exploration_scVelo_figures(fontsz=12, n_neighbors=10):
                 xind, yind = cord
                 cords_vals = spatial_cords[:, [xind, yind]]
                 delta_x, delta_y = get_displacement_matrix(cords_vals)
-                weighted_delta_x, weighted_delta_y = get_weighted_displacements(delta_x,sparsed_pi_mat), get_weighted_displacements(
+                weighted_delta_x, weighted_delta_y = get_weighted_displacements(delta_x, sparsed_pi_mat), get_weighted_displacements(
                     delta_y, sparsed_pi_mat)
                 ax.quiver(cords_vals[:, 0], cords_vals[:, 1], weighted_delta_x, weighted_delta_y, pseudotime, cmap=cm)
                 ax.set_aspect('equal', 'box')

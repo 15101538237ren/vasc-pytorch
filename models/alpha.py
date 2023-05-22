@@ -48,8 +48,8 @@ def graph_alpha(pts, n_layer=1, cut=np.inf, draw=False):
         pos_dict = {i: pts_list[i] for i in range(n_node)}
         nx.draw_networkx(extended_graph, pos=pos_dict, with_labels=False, node_size=1, node_color='dimgrey',
                          edge_color='darkgrey')
-        plt.axis('equal');
-        plt.axis('off');
+        plt.axis('equal')
+        plt.axis('off')
         plt.show()
 
     # Get the sparse adjacency matrix
